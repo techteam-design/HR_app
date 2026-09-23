@@ -3,6 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input, Label } from "@/components/ui/input";
 import { signIn } from "@/lib/auth/auth-client";
 import { loginSchema } from "@/validations/auth";
 
@@ -45,49 +48,37 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-      <div className="space-y-1">
-        <label htmlFor="email" className="block text-sm font-medium text-slate-700">
-          Email
-        </label>
-        <input
+    <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+      <div className="space-y-2">
+        <Label htmlFor="email">Email</Label>
+        <Input
           id="email"
           name="email"
           type="email"
           autoComplete="username"
           inputMode="email"
           required
-          className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-900 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+          invalid={!!error}
         />
       </div>
 
-      <div className="space-y-1">
-        <label htmlFor="password" className="block text-sm font-medium text-slate-700">
-          Password
-        </label>
-        <input
+      <div className="space-y-2">
+        <Label htmlFor="password">Password</Label>
+        <Input
           id="password"
           name="password"
           type="password"
           autoComplete="current-password"
           required
-          className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-900 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+          invalid={!!error}
         />
       </div>
 
-      {error && (
-        <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
-        </p>
-      )}
+      {error && <Alert>{error}</Alert>}
 
-      <button
-        type="submit"
-        disabled={pending}
-        className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-base font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-      >
-        {pending ? "Signing in…" : "Sign in"}
-      </button>
+      <Button type="submit" fullWidth loading={pending} loadingText="Signing in…">
+        Sign in
+      </Button>
     </form>
   );
 }

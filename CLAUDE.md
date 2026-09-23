@@ -1,6 +1,8 @@
-# HR & Leave Management App — Shushute Beauty Hub
+# HR & Leave Management App — Shosha Beauty Company (SBC), Singapore
 
-Client: Shushute Beauty Hub, Singapore. About 50 employees, local and foreign staff.
+Client: Shosha Beauty Company (SBC), Singapore. About 50 employees, local and foreign staff.
+Note: the original proposal used the name Shushute Beauty Hub; the client has confirmed the final name is
+Shosha Beauty Company (SBC). The production domain is still to be confirmed.
 Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 
 ## Tech stack
@@ -94,6 +96,24 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Database-backed rate limiting before go-live (Sprint 4)
 - hr_viewer needs read-only employee list and profile views (Sprint 1 employee pages)
 - Client to confirm who approves the owner's / top admin's leave
+
+## Design system ("D · Lavender silk")
+- Rule: use tokens and src/components/ui components; never hardcode colours (no hex/rgb in components).
+- All tokens live in ONE place: the @theme block in src/app/globals.css. Change brand colours there only.
+- Fonts (next/font, self-hosted, set up in src/app/layout.tsx): Playfair Display 500/600 + italic
+  (font-display: titles) and Montserrat 400/500/600 (font-sans: body and UI).
+- Colour tokens: bg, surface, lilac-50/100/200, brand-lilac (decorative only, never text), plum-900/700/500,
+  muted, border, input-border, blush-50/500/700, sage-50/500/700,
+  status-{approved,pending,rejected,cancelled}-{bg,text}. Use as bg-*, text-*, border-*, fill-*.
+- Contrast: muted text is fine on bg, surface and the *-50 tints, but NOT on lilac-100 (fails 4.5:1).
+- Radii: rounded-input (14px), rounded-card (24px), rounded-sheet (28px), rounded-full (pills), rounded-arch.
+- Type: text-page-title (44px) / text-page-title-mobile (32px), text-section-title (24px), the eyebrow utility
+  (12px uppercase), body 14–15px, small 12–13px text-muted. Headings italicise one accent word with <em>.
+- Shadow: shadow-float (floating mobile nav). Motion: 150–200ms colour transitions only; reduced motion respected.
+- Components (src/components/ui/): Button / ButtonLink, Input / Label / FieldError / FieldHint, Alert, Card,
+  ArchCard, StatusBadge, DateTile, Avatar, Logo, SpaIllustration, SparkleDivider, PageHeader / AccentTitle,
+  Sheet, icons. Layout pieces live in src/components/layout/ (PagePlaceholder, NavLinks, MobileNav, UserPanel).
+- /design-preview (development only) shows every component with sample data.
 
 ## Conventions
 - File names: lowercase-with-hyphens; services end in .service.ts

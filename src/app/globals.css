@@ -1,20 +1,118 @@
 @import "tailwindcss";
 
-/* Neutral light theme until branding (Sprint 4). */
-:root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
+/*
+ * Design system "D · Lavender silk".
+ * This @theme block is the ONLY place brand colours, radii and type sizes are
+ * defined. Each token becomes a CSS variable (e.g. --color-plum-900) and a
+ * Tailwind utility (e.g. bg-plum-900, text-plum-900, rounded-card).
+ * Components must use these tokens, never hex values.
+ */
+@theme {
+  /* Surfaces */
+  --color-bg: #fbf8fc;
+  --color-surface: #ffffff;
+
+  /* Lilac family */
+  --color-lilac-50: #f1e6f6;
+  --color-lilac-100: #e6d5ef;
+  --color-lilac-200: #d9c4e5;
+  /* Logo colour. Decorative only: never use for text. */
+  --color-brand-lilac: #d5b3e4;
+
+  /* Plum family (text, primary actions, accents) */
+  --color-plum-900: #3b2447;
+  --color-plum-700: #6a3f82;
+  --color-plum-500: #8e5fa8;
+
+  /* Neutrals */
+  --color-muted: #6e5a78;
+  --color-border: #eee3f3;
+  --color-input-border: #dccbe6;
+
+  /* Blush (MC, pending) */
+  --color-blush-50: #f8e8ee;
+  --color-blush-500: #c77d97;
+  --color-blush-700: #86354f;
+
+  /* Sage (unpaid) */
+  --color-sage-50: #eaf1e8;
+  --color-sage-500: #7fa487;
+  --color-sage-700: #3f6446;
+
+  /* Status badges */
+  --color-status-approved-bg: #e3f0e4;
+  --color-status-approved-text: #2f5a38;
+  --color-status-pending-bg: #f8e8ee;
+  --color-status-pending-text: #86354f;
+  --color-status-rejected-bg: #fbe4e4;
+  --color-status-rejected-text: #8e2b2b;
+  --color-status-cancelled-bg: #efeaf2;
+  --color-status-cancelled-text: #5e5366;
+
+  /* Radii (pill = rounded-full; arch = the rounded-arch utility below) */
+  --radius-input: 14px;
+  --radius-card: 24px;
+  --radius-sheet: 28px;
+
+  /* Shadows */
+  --shadow-float: 0 10px 30px -12px color-mix(in srgb, var(--color-plum-900) 35%, transparent);
+
+  /* Fonts (loaded with next/font in src/app/layout.tsx) */
+  --font-sans: var(--font-montserrat), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-playfair), Georgia, "Times New Roman", serif;
+
+  /* Type scale */
+  --text-page-title: 2.75rem;
+  --text-page-title--line-height: 1.1;
+  --text-page-title-mobile: 2rem;
+  --text-page-title-mobile--line-height: 1.15;
+  --text-section-title: 1.5rem;
+  --text-section-title--line-height: 1.25;
+  --text-eyebrow: 0.75rem;
+  --text-eyebrow--line-height: 1rem;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* Arch shape used by ArchCard and the login illustration frame. */
+@utility rounded-arch {
+  border-radius: 150px 150px 24px 24px;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+/* 12px uppercase label above headings and inside cards. */
+@utility eyebrow {
+  font-family: var(--font-sans);
+  font-size: var(--text-eyebrow);
+  line-height: var(--text-eyebrow--line-height);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-plum-900);
+    font-family: var(--font-sans);
+  }
+
+  /* Headings italicise one accent word: <h1>Welcome <em>back</em></h1> */
+  :where(h1, h2, h3) em {
+    font-style: italic;
+    font-weight: 500;
+    color: var(--color-plum-700);
+  }
+}
+
+/* Subtle motion only, and none for people who ask for reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

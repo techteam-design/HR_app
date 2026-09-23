@@ -3,10 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { FieldHint, Input, Label } from "@/components/ui/input";
 import { changePasswordSchema, MIN_PASSWORD_LENGTH } from "@/validations/auth";
-
-const inputClass =
-  "block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-900 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200";
 
 export function ChangePasswordForm() {
   const router = useRouter();
@@ -52,26 +52,21 @@ export function ChangePasswordForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-      <div className="space-y-1">
-        <label htmlFor="currentPassword" className="block text-sm font-medium text-slate-700">
-          Current password
-        </label>
-        <input
+    <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+      <div className="space-y-2">
+        <Label htmlFor="currentPassword">Current password</Label>
+        <Input
           id="currentPassword"
           name="currentPassword"
           type="password"
           autoComplete="current-password"
           required
-          className={inputClass}
         />
       </div>
 
-      <div className="space-y-1">
-        <label htmlFor="newPassword" className="block text-sm font-medium text-slate-700">
-          New password
-        </label>
-        <input
+      <div className="space-y-2">
+        <Label htmlFor="newPassword">New password</Label>
+        <Input
           id="newPassword"
           name="newPassword"
           type="password"
@@ -79,40 +74,28 @@ export function ChangePasswordForm() {
           minLength={MIN_PASSWORD_LENGTH}
           required
           aria-describedby="newPasswordHint"
-          className={inputClass}
         />
-        <p id="newPasswordHint" className="text-xs text-slate-500">
+        <FieldHint id="newPasswordHint">
           At least {MIN_PASSWORD_LENGTH} characters, different from your current password.
-        </p>
+        </FieldHint>
       </div>
 
-      <div className="space-y-1">
-        <label htmlFor="confirmPassword" className="block text-sm font-medium text-slate-700">
-          Confirm new password
-        </label>
-        <input
+      <div className="space-y-2">
+        <Label htmlFor="confirmPassword">Confirm new password</Label>
+        <Input
           id="confirmPassword"
           name="confirmPassword"
           type="password"
           autoComplete="new-password"
           required
-          className={inputClass}
         />
       </div>
 
-      {error && (
-        <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
-        </p>
-      )}
+      {error && <Alert>{error}</Alert>}
 
-      <button
-        type="submit"
-        disabled={pending}
-        className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-base font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-      >
-        {pending ? "Saving…" : "Change password"}
-      </button>
+      <Button type="submit" fullWidth loading={pending} loadingText="Saving…">
+        Change password
+      </Button>
     </form>
   );
 }

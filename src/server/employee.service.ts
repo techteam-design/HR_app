@@ -9,6 +9,7 @@ const sessionEmployeeColumns = {
   userId: employees.userId,
   employeeCode: employees.employeeCode,
   fullName: employees.fullName,
+  designation: employees.designation,
   email: employees.email,
   role: employees.role,
   status: employees.status,

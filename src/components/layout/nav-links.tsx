@@ -4,14 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import type { NavItem, NavSection } from "@/lib/auth/rbac";
+import { cn } from "@/lib/utils/cn";
+
+import { iconFor, isActivePath } from "./nav-icons";
 
 const SECTION_ORDER: NavSection[] = ["My work", "Team", "Admin", "Reports"];
 
-function isActive(pathname: string, href: string): boolean {
-  // "/reports" should not stay highlighted on "/reports/calendar".
-  return pathname === href || (href !== "/reports" && pathname.startsWith(`${href}/`));
-}
-
+// Sidebar and "More" sheet navigation: pill links grouped under eyebrow headings.
 export function NavLinks({
   items,
   onNavigate,
@@ -22,30 +21,32 @@ export function NavLinks({
   const pathname = usePathname();
 
   return (
-    <nav className="space-y-5">
+    <nav aria-label="Main" className="space-y-6">
       {SECTION_ORDER.map((section) => {
         const sectionItems = items.filter((item) => item.section === section);
         if (sectionItems.length === 0) return null;
         return (
           <div key={section}>
-            <p className="px-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              {section}
-            </p>
-            <ul className="mt-1 space-y-0.5">
+            <p className="eyebrow px-4 text-plum-700">{section}</p>
+            <ul className="mt-2 space-y-1">
               {sectionItems.map((item) => {
-                const active = isActive(pathname, item.href);
+                const active = isActivePath(pathname, item.href);
+                const Icon = iconFor(item.href);
                 return (
                   <li key={item.href}>
                     <Link
                       href={item.href}
                       onClick={onNavigate}
                       aria-current={active ? "page" : undefined}
-                      className={`block rounded-lg px-3 py-2 text-sm ${
+                      className={cn(
+                        "flex min-h-11 items-center gap-3 rounded-full px-4 text-sm transition-colors duration-150",
+                        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-plum-700",
                         active
-                          ? "bg-slate-900 font-medium text-white"
-                          : "text-slate-700 hover:bg-slate-100"
-                      }`}
+                          ? "bg-lilac-50 font-semibold text-plum-900"
+                          : "font-medium text-muted hover:bg-lilac-50 hover:text-plum-900",
+                      )}
                     >
+                      <Icon width={20} height={20} className={active ? "text-plum-700" : undefined} />
                       {item.label}
                     </Link>
                   </li>

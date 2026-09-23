@@ -1,6 +1,7 @@
-import { MobileMenu } from "@/components/layout/mobile-menu";
+import { MobileNav } from "@/components/layout/mobile-nav";
 import { NavLinks } from "@/components/layout/nav-links";
 import { UserPanel } from "@/components/layout/user-panel";
+import { Logo } from "@/components/ui/logo";
 import { navigationFor, ROLE_LABELS } from "@/lib/auth/rbac";
 import { requireEmployee } from "@/server/auth.service";
 
@@ -9,28 +10,31 @@ import { requireEmployee } from "@/server/auth.service";
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const employee = await requireEmployee();
   const navItems = navigationFor(employee.role);
-  const roleLabel = ROLE_LABELS[employee.role];
+  // Designation under the name, falling back to the role label.
+  const subtitle = employee.designation.trim() || ROLE_LABELS[employee.role];
 
   return (
     <div className="min-h-screen md:flex">
       {/* Desktop sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col justify-between border-r border-slate-200 bg-white p-4 md:sticky md:top-0 md:flex md:h-screen md:overflow-y-auto">
-        <div>
-          <p className="px-3 pb-5 text-lg font-semibold text-slate-900">HR &amp; Leave</p>
+      <aside className="hidden w-61 shrink-0 flex-col border-r border-border bg-surface px-4 py-6 md:sticky md:top-0 md:flex md:h-screen md:overflow-y-auto">
+        <div className="px-4 pb-8">
+          <Logo variant="mono" width={84} priority />
+        </div>
+        <div className="flex-1">
           <NavLinks items={navItems} />
         </div>
-        <div className="border-t border-slate-200 pt-4">
-          <UserPanel name={employee.fullName} roleLabel={roleLabel} />
+        <div className="mt-8">
+          <UserPanel name={employee.fullName} subtitle={subtitle} />
         </div>
       </aside>
 
-      {/* Mobile top bar */}
-      <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4 md:hidden">
-        <p className="font-semibold text-slate-900">HR &amp; Leave</p>
-        <MobileMenu items={navItems} name={employee.fullName} roleLabel={roleLabel} />
-      </header>
+      {/* Mobile top bar + floating bottom navigation */}
+      <MobileNav items={navItems} name={employee.fullName} subtitle={subtitle} />
 
-      <main className="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8">{children}</main>
+      {/* Bottom padding on mobile keeps content clear of the floating nav. */}
+      <main className="min-w-0 flex-1 px-4 pt-6 pb-32 md:px-10 md:pt-10 md:pb-12 lg:px-14">
+        <div className="mx-auto max-w-5xl">{children}</div>
+      </main>
     </div>
   );
 }

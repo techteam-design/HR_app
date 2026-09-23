@@ -1,27 +1,35 @@
 import Link from "next/link";
 
+import { Avatar } from "@/components/ui/avatar";
+import { KeyIcon } from "@/components/ui/icons";
+
 import { SignOutButton } from "./sign-out-button";
 
+// User card: avatar, name, subtitle (designation or role), then change password and sign out.
 export function UserPanel({
   name,
-  roleLabel,
+  subtitle,
   onNavigate,
 }: {
   name: string;
-  roleLabel: string;
+  subtitle: string;
   onNavigate?: () => void;
 }) {
   return (
-    <div className="space-y-3">
-      <div className="px-3">
-        <p className="truncate text-sm font-medium text-slate-900">{name}</p>
-        <p className="text-xs text-slate-500">{roleLabel}</p>
+    <div className="space-y-1">
+      <div className="mb-2 flex items-center gap-3 rounded-card bg-lilac-50 p-3">
+        <Avatar name={name} size="md" />
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-plum-900">{name}</p>
+          <p className="truncate text-[13px] text-muted">{subtitle}</p>
+        </div>
       </div>
       <Link
         href="/change-password"
         onClick={onNavigate}
-        className="block rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+        className="flex min-h-11 items-center gap-3 rounded-full px-4 text-sm font-medium text-muted transition-colors duration-150 hover:bg-lilac-50 hover:text-plum-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-plum-700"
       >
+        <KeyIcon width={20} height={20} />
         Change password
       </Link>
       <SignOutButton />
