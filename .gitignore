@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local env, cloudflare / opennext build output
+.env.local
+.env*.local
+.wrangler/
+.open-next/
+!.env.example
+.dev.vars*
