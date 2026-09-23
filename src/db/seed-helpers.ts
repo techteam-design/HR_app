@@ -1,10 +1,15 @@
 import { TZDate } from "@date-fns/tz";
-import { generateRandomString, hashPassword } from "better-auth/crypto";
 import { format } from "date-fns";
 import { eq } from "drizzle-orm";
 
+import { normalizeLoginEmail } from "../server/login-account.service";
+
 import type { Database } from "./index";
-import { account, branches, departments, user } from "./schema";
+import { branches, departments } from "./schema";
+
+// Login creation (Better Auth user + credential account, default hashing)
+// lives in src/server/login-account.service.ts and is shared with the app.
+export { buildCredentialLogin, findUserIdByEmail } from "../server/login-account.service";
 
 // Shared helpers for the seed scripts (src/db/seed*.ts). Not used by the app.
 
@@ -49,7 +54,7 @@ export function printTarget(scriptName: string): void {
 }
 
 export function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
+  return normalizeLoginEmail(email);
 }
 
 export function todayInSingapore(): TZDate {
@@ -59,57 +64,6 @@ export function todayInSingapore(): TZDate {
 // Formats a date as a DATE column value (YYYY-MM-DD) in its own time zone.
 export function toDateColumn(date: Date): string {
   return format(date, "yyyy-MM-dd");
-}
-
-// Same alphabet and length as Better Auth's internal generateId().
-function generateBetterAuthId(): string {
-  return generateRandomString(32, "a-z", "A-Z", "0-9");
-}
-
-// Builds the rows Better Auth's email sign-up would write (better-auth 1.7.5):
-// a user with a lowercased email, and a "credential" account whose accountId
-// is the user id and whose password is hashed with Better Auth's DEFAULT
-// hasher (scrypt, from better-auth/crypto).
-//
-// IMPORTANT: the Better Auth config must use the default password hashing
-// (no emailAndPassword.password.hash / verify overrides), or logins created
-// here will fail to sign in.
-export async function buildCredentialLogin(input: {
-  name: string;
-  email: string;
-  password: string;
-}) {
-  const userId = generateBetterAuthId();
-  const passwordHash = await hashPassword(input.password);
-
-  const userRow: typeof user.$inferInsert = {
-    id: userId,
-    name: input.name,
-    email: normalizeEmail(input.email),
-    emailVerified: false,
-  };
-
-  const accountRow: typeof account.$inferInsert = {
-    id: generateBetterAuthId(),
-    accountId: userId,
-    providerId: "credential",
-    userId,
-    password: passwordHash,
-  };
-
-  return { userId, userRow, accountRow };
-}
-
-export async function findUserIdByEmail(
-  db: Database,
-  email: string,
-): Promise<string | undefined> {
-  const [row] = await db
-    .select({ id: user.id })
-    .from(user)
-    .where(eq(user.email, normalizeEmail(email)))
-    .limit(1);
-  return row?.id;
 }
 
 // Insert-if-missing by unique name. Returns the id and whether it was created.

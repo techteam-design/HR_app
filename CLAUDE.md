@@ -92,9 +92,10 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Carry-forward expiry: none assumed unless the client says otherwise
 - Per-employee approval level assignment rule
 - Domain, brand assets, UAT sign-off person
-- Deactivating an employee must also delete all of that user's sessions (build this with the deactivate action)
 - Database-backed rate limiting before go-live (Sprint 4)
-- hr_viewer needs read-only employee list and profile views (Sprint 1 employee pages)
+- Staging deploy on Cloudflare before Sprint 2 to verify password hashing stays within Workers CPU limits;
+  the Workers Paid plan (about $5/month) may be required.
+- R2 bucket CORS rule for browser photo uploads, when R2 is set up (see Sprint 1 employee report)
 - Client to confirm who approves the owner's / top admin's leave
 
 ## Design system ("D · Lavender silk")

@@ -3,12 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import type { NavItem, NavSection } from "@/lib/auth/rbac";
+import { NAV_SECTIONS, type NavItem } from "@/lib/auth/rbac";
 import { cn } from "@/lib/utils/cn";
 
 import { iconFor, isActivePath } from "./nav-icons";
-
-const SECTION_ORDER: NavSection[] = ["My work", "Team", "Admin", "Reports"];
 
 // Sidebar and "More" sheet navigation: pill links grouped under eyebrow headings.
 export function NavLinks({
@@ -22,7 +20,7 @@ export function NavLinks({
 
   return (
     <nav aria-label="Main" className="space-y-6">
-      {SECTION_ORDER.map((section) => {
+      {NAV_SECTIONS.map((section) => {
         const sectionItems = items.filter((item) => item.section === section);
         if (sectionItems.length === 0) return null;
         return (

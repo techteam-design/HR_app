@@ -7,6 +7,7 @@ import {
   can,
   isLoginAllowed,
   NAV_ITEMS,
+  NAV_SECTIONS,
   navigationFor,
   ROLES,
   type Action,
@@ -131,16 +132,44 @@ describe("navigationFor()", () => {
     ]);
   });
 
-  it("hr_viewer sees reports but no admin, approval or team pages", () => {
+  it("hr_viewer sees the read-only employee list and reports, but no other admin, approval or team pages", () => {
     expect(hrefs("hr_viewer")).toEqual([
       "/dashboard",
       "/leave/apply",
       "/leave/history",
       "/profile",
+      "/admin/employees",
       "/reports",
       "/reports/calendar",
     ]);
-    expect(hrefs("hr_viewer").some((href) => href.startsWith("/admin"))).toBe(false);
+    expect(hrefs("hr_viewer").filter((href) => href.startsWith("/admin"))).toEqual(["/admin/employees"]);
+  });
+
+  it("groups Employees under People, and Departments, Leave policies and Approval setup under Admin", () => {
+    const sectionOf = (href: string) => NAV_ITEMS.find((item) => item.href === href)?.section;
+    expect(sectionOf("/admin/employees")).toBe("People");
+    expect(sectionOf("/admin/departments")).toBe("Admin");
+    expect(sectionOf("/admin/leave-policies")).toBe("Admin");
+    expect(sectionOf("/admin/approval-config")).toBe("Admin");
+  });
+
+  it("People is visible to admin and hr_viewer only, Admin to admin only", () => {
+    const sections = (role: Role) => new Set(navigationFor(role).map((item) => item.section));
+    for (const role of ROLES) {
+      expect(sections(role).has("People")).toBe(role === "admin" || role === "hr_viewer");
+      expect(sections(role).has("Admin")).toBe(role === "admin");
+    }
+  });
+
+  it("every nav item uses a known section, listed in display order", () => {
+    expect(NAV_SECTIONS).toEqual(["My work", "Team", "People", "Admin", "Reports"]);
+    for (const item of NAV_ITEMS) expect(NAV_SECTIONS).toContain(item.section);
+  });
+
+  it("the employee list is reachable by exactly the roles that can view all records", () => {
+    for (const role of ROLES) {
+      expect(hrefs(role).includes("/admin/employees")).toBe(can(role, "view_all_records"));
+    }
   });
 });
 

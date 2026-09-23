@@ -71,7 +71,9 @@ export function isLoginAllowed(
   return !!employee && employee.status !== "inactive";
 }
 
-export type NavSection = "My work" | "Team" | "Admin" | "Reports";
+// Sidebar groups, in display order.
+export const NAV_SECTIONS = ["My work", "Team", "People", "Admin", "Reports"] as const;
+export type NavSection = (typeof NAV_SECTIONS)[number];
 
 export type NavItem = {
   href: string;
@@ -88,7 +90,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { href: "/profile", label: "My profile", section: "My work", action: "view_own_profile" },
   { href: "/approvals", label: "Approvals", section: "Team", action: "approve_leave" },
   { href: "/team-calendar", label: "Team calendar", section: "Team", action: "view_team_calendar" },
-  { href: "/admin/employees", label: "Employees", section: "Admin", action: "manage_employees" },
+  { href: "/admin/employees", label: "Employees", section: "People", action: "view_all_records" },
   { href: "/admin/departments", label: "Departments & branches", section: "Admin", action: "manage_org" },
   { href: "/admin/org-chart", label: "Org chart", section: "Admin", action: "manage_org" },
   { href: "/admin/leave-policies", label: "Leave policies", section: "Admin", action: "manage_policies" },

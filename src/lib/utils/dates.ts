@@ -19,6 +19,30 @@ export function greetingFor(date: Date = new Date()): string {
   return "Good evening";
 }
 
+// Today's calendar date in Singapore as a DATE column value, e.g. "2026-09-23".
+export function todayIsoInSingapore(date: Date = new Date()): string {
+  // en-CA formats as YYYY-MM-DD.
+  return new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: BUSINESS_TIME_ZONE,
+  }).format(date);
+}
+
+// Formats a DATE column value ("2026-09-23") as "23 Sep 2026". The value has
+// no time part, so it is read and printed in UTC to avoid any day shift.
+export function formatDisplayDate(isoDate: string): string {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return isoDate;
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+}
+
 // e.g. "Wednesday, 23 September 2026"
 export function formatLongDate(date: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-GB", {
