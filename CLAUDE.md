@@ -17,6 +17,7 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 ## Architecture rules (never break these)
 1. No business logic in pages or components. Components only display data and collect input.
 2. No database calls in src/lib/. The leave engine is pure functions: inputs in, results out.
+   Exception: src/lib/auth/auth.ts may reference the database adapter for Better Auth. All other src/lib code stays database-free.
 3. API routes stay thin: check session and role, validate with Zod, call a service in src/server/.
 4. Services in src/server/ handle database reads/writes and call src/lib/ for calculations.
 5. Role checks happen on the server in every API route. Hiding UI is convenience, not security.
@@ -34,7 +35,7 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 - employee: own profile, own balances and history, submit own leave
 - manager: employee rights + approve/reject for direct reports + team calendar
 - admin: full access, including employees, org structure, policies, approval config, overrides, all reports and exports
-- hr_viewer: read-only view of all records and reports; every write endpoint returns 403
+- hr_viewer: read-only for other people's data; can view own profile and apply for own leave. Every write endpoint on other employees' data returns 403.
 
 ## Confirmed leave rules
 ### Annual leave
@@ -84,11 +85,15 @@ status (active / inactive / probation).
 Payroll, attendance or biometrics, native app store apps, integration with existing HR tools,
 hospitalisation leave, leave encashment, shift scheduling, performance management.
 
-## Still open (ask before assuming)
+## Still open / later (ask before assuming)
 - MC pro-rating rounding rule (up, down or nearest)
 - Carry-forward expiry: none assumed unless the client says otherwise
 - Per-employee approval level assignment rule
 - Domain, brand assets, UAT sign-off person
+- Deactivating an employee must also delete all of that user's sessions (build this with the deactivate action)
+- Database-backed rate limiting before go-live (Sprint 4)
+- hr_viewer needs read-only employee list and profile views (Sprint 1 employee pages)
+- Client to confirm who approves the owner's / top admin's leave
 
 ## Conventions
 - File names: lowercase-with-hyphens; services end in .service.ts
