@@ -132,22 +132,27 @@ describe("navigationFor()", () => {
     ]);
   });
 
-  it("hr_viewer sees the read-only employee list and reports, but no other admin, approval or team pages", () => {
+  it("hr_viewer sees the read-only employee list, org chart and reports, but no other admin, approval or team pages", () => {
     expect(hrefs("hr_viewer")).toEqual([
       "/dashboard",
       "/leave/apply",
       "/leave/history",
       "/profile",
       "/admin/employees",
+      "/admin/org-chart",
       "/reports",
       "/reports/calendar",
     ]);
-    expect(hrefs("hr_viewer").filter((href) => href.startsWith("/admin"))).toEqual(["/admin/employees"]);
+    expect(hrefs("hr_viewer").filter((href) => href.startsWith("/admin"))).toEqual([
+      "/admin/employees",
+      "/admin/org-chart",
+    ]);
   });
 
-  it("groups Employees under People, and Departments, Leave policies and Approval setup under Admin", () => {
+  it("groups Employees and Org chart under People, and Departments, Leave policies and Approval setup under Admin", () => {
     const sectionOf = (href: string) => NAV_ITEMS.find((item) => item.href === href)?.section;
     expect(sectionOf("/admin/employees")).toBe("People");
+    expect(sectionOf("/admin/org-chart")).toBe("People");
     expect(sectionOf("/admin/departments")).toBe("Admin");
     expect(sectionOf("/admin/leave-policies")).toBe("Admin");
     expect(sectionOf("/admin/approval-config")).toBe("Admin");
@@ -166,10 +171,20 @@ describe("navigationFor()", () => {
     for (const item of NAV_ITEMS) expect(NAV_SECTIONS).toContain(item.section);
   });
 
-  it("the employee list is reachable by exactly the roles that can view all records", () => {
+  it("the employee list and org chart are reachable by exactly the roles that can view all records", () => {
     for (const role of ROLES) {
       expect(hrefs(role).includes("/admin/employees")).toBe(can(role, "view_all_records"));
+      expect(hrefs(role).includes("/admin/org-chart")).toBe(can(role, "view_all_records"));
     }
+  });
+
+  it("the org chart needs view_all_records; departments & branches need manage_org", () => {
+    const actionOf = (href: string) => NAV_ITEMS.find((item) => item.href === href)?.action;
+    expect(actionOf("/admin/org-chart")).toBe("view_all_records");
+    expect(actionOf("/admin/departments")).toBe("manage_org");
+    expect(hrefs("manager")).not.toContain("/admin/org-chart");
+    expect(hrefs("employee")).not.toContain("/admin/departments");
+    expect(hrefs("hr_viewer")).not.toContain("/admin/departments");
   });
 });
 

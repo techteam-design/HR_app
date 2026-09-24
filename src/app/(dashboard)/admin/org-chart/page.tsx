@@ -1,14 +1,22 @@
-import { PagePlaceholder } from "@/components/layout/page-placeholder";
+import { OrgChart } from "@/components/org/org-chart";
+import { PageHeader } from "@/components/ui/page-header";
 import { requireEmployee } from "@/server/auth.service";
+import { getOrgChartData } from "@/server/org-chart.service";
 
 export default async function OrgChartPage() {
-  await requireEmployee({ action: "manage_org" });
+  await requireEmployee({ action: "view_all_records" });
+  const data = await getOrgChartData();
 
   return (
-    <PagePlaceholder
-      title="Org chart"
-      sprint="Sprint 1"
-      description="The reporting hierarchy built from each employee's reporting manager."
-    />
+    <div className="space-y-8">
+      <PageHeader
+        title={
+          <>
+            Org <em>chart</em>
+          </>
+        }
+      />
+      <OrgChart people={data.people} departments={data.departments} branches={data.branches} />
+    </div>
   );
 }

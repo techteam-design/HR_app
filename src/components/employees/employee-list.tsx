@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Avatar } from "@/components/ui/avatar";
 
 import { EmployeeStatusBadge } from "./employee-status-badge";
-import { ROLE_LABELS } from "./labels";
+import { ROLE_LABELS, unitLabel } from "./labels";
 
 export type EmployeeRow = {
   id: string;
@@ -11,7 +11,9 @@ export type EmployeeRow = {
   employeeCode: string;
   designation: string;
   departmentName: string;
+  departmentIsActive: boolean;
   branchName: string;
+  branchIsActive: boolean;
   role: keyof typeof ROLE_LABELS;
   status: "active" | "inactive" | "probation";
   photoUrl: string | null;
@@ -50,8 +52,8 @@ export function EmployeeList({ rows }: { rows: EmployeeRow[] }) {
                     </span>
                   </Link>
                 </td>
-                <td className="px-4 py-3 text-plum-900">{row.departmentName}</td>
-                <td className="px-4 py-3 text-plum-900">{row.branchName}</td>
+                <td className="px-4 py-3 text-plum-900">{unitLabel(row.departmentName, row.departmentIsActive)}</td>
+                <td className="px-4 py-3 text-plum-900">{unitLabel(row.branchName, row.branchIsActive)}</td>
                 <td className="px-4 py-3 text-plum-900">{ROLE_LABELS[row.role]}</td>
                 <td className="px-5 py-3">
                   <EmployeeStatusBadge status={row.status} />
@@ -80,7 +82,8 @@ export function EmployeeList({ rows }: { rows: EmployeeRow[] }) {
                   {row.employeeCode} · {row.designation}
                 </span>
                 <span className="mt-1 block text-[13px] text-plum-900">
-                  {row.departmentName} · {row.branchName} · {ROLE_LABELS[row.role]}
+                  {unitLabel(row.departmentName, row.departmentIsActive)} ·{" "}
+                  {unitLabel(row.branchName, row.branchIsActive)} · {ROLE_LABELS[row.role]}
                 </span>
               </span>
             </Link>

@@ -138,6 +138,19 @@ export const MoreIcon: IconComponent = (props) => (
   </Icon>
 );
 
+export const ChevronDownIcon: IconComponent = (props) => (
+  <Icon {...props}>
+    <path d="m6 9 6 6 6-6" />
+  </Icon>
+);
+
+export const SearchIcon: IconComponent = (props) => (
+  <Icon {...props}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5" />
+  </Icon>
+);
+
 export const CloseIcon: IconComponent = (props) => (
   <Icon {...props}>
     <path d="M6 6l12 12M18 6 6 18" />

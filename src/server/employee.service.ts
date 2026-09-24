@@ -28,6 +28,7 @@ import {
   generateBetterAuthId,
   hashLoginPassword,
 } from "./login-account.service";
+import { fail, UUID, type ServiceError, type ServiceResult } from "./service-result";
 
 // ---------------------------------------------------------------------------
 // Session lookup (used by auth.service and the Better Auth session hook)
@@ -69,24 +70,7 @@ export async function clearMustChangePassword(employeeId: string): Promise<void>
 // Results
 // ---------------------------------------------------------------------------
 
-export type ServiceError = {
-  ok: false;
-  status: 400 | 404 | 409;
-  error: string;
-  fieldErrors?: Record<string, string>;
-  // Extra lines shown under the error, e.g. who needs reassigning.
-  details?: string[];
-};
-
-export type ServiceResult<T extends object = object> = ({ ok: true } & T) | ServiceError;
-
-function fail(
-  status: ServiceError["status"],
-  error: string,
-  extra: Pick<ServiceError, "fieldErrors" | "details"> = {},
-): ServiceError {
-  return { ok: false, status, error, ...extra };
-}
+export type { ServiceError, ServiceResult };
 
 const CHECK_FIELDS = "Please check the highlighted fields.";
 
@@ -117,8 +101,6 @@ function uniqueViolation(error: unknown): ServiceError | null {
   }
   return null;
 }
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ---------------------------------------------------------------------------
 // Reads
@@ -163,7 +145,9 @@ export async function listEmployees(query: EmployeeListQuery) {
         email: employees.email,
         designation: employees.designation,
         departmentName: departments.name,
+        departmentIsActive: departments.isActive,
         branchName: branches.name,
+        branchIsActive: branches.isActive,
         role: employees.role,
         status: employees.status,
         classification: employees.classification,
@@ -210,8 +194,10 @@ export async function getEmployeeDetail(id: string) {
       designation: employees.designation,
       departmentId: employees.departmentId,
       departmentName: departments.name,
+      departmentIsActive: departments.isActive,
       branchId: employees.branchId,
       branchName: branches.name,
+      branchIsActive: branches.isActive,
       classification: employees.classification,
       reportingManagerId: employees.reportingManagerId,
       reportingManagerName: manager.fullName,
@@ -234,6 +220,20 @@ export async function getEmployeeDetail(id: string) {
 }
 
 export type EmployeeDetail = NonNullable<Awaited<ReturnType<typeof getEmployeeDetail>>>;
+
+// Active and probation employees who report directly to this employee.
+export async function listDirectReports(managerId: string) {
+  return getDb()
+    .select({
+      id: employees.id,
+      fullName: employees.fullName,
+      designation: employees.designation,
+      photoKey: employees.photoKey,
+    })
+    .from(employees)
+    .where(and(eq(employees.reportingManagerId, managerId), ne(employees.status, "inactive")))
+    .orderBy(asc(employees.fullName));
+}
 
 // Choices for the create/edit form and list filters.
 export async function getEmployeeFormOptions(excludeEmployeeId?: string) {
@@ -276,7 +276,15 @@ async function activeAdminIds(): Promise<string[]> {
 
 async function validateProfile(
   input: EmployeeFieldsInput,
-  options: { employeeId: string | null; checkLoginEmail: boolean; ownUserId: string | null },
+  options: {
+    employeeId: string | null;
+    checkLoginEmail: boolean;
+    ownUserId: string | null;
+    // The employee's current department and branch stay allowed even if
+    // they have since been deactivated.
+    currentDepartmentId?: string;
+    currentBranchId?: string;
+  },
 ): Promise<Record<string, string>> {
   const db = getDb();
   const errors: Record<string, string> = {};
@@ -294,14 +302,30 @@ async function validateProfile(
       .from(employees)
       .where(and(eq(employees.employeeCode, input.employeeCode), notSelf(employees.id)))
       .limit(1),
-    db.select({ id: departments.id }).from(departments).where(eq(departments.id, input.departmentId)).limit(1),
-    db.select({ id: branches.id }).from(branches).where(eq(branches.id, input.branchId)).limit(1),
+    db
+      .select({ id: departments.id, isActive: departments.isActive })
+      .from(departments)
+      .where(eq(departments.id, input.departmentId))
+      .limit(1),
+    db
+      .select({ id: branches.id, isActive: branches.isActive })
+      .from(branches)
+      .where(eq(branches.id, input.branchId))
+      .limit(1),
   ]);
 
   if (emailTaken.length > 0) errors.email = "Another employee already uses this email";
   if (codeTaken.length > 0) errors.employeeCode = "This employee code is already in use";
-  if (department.length === 0) errors.departmentId = "Choose a department";
-  if (branch.length === 0) errors.branchId = "Choose a branch";
+  if (department.length === 0) {
+    errors.departmentId = "Choose a department";
+  } else if (!department[0].isActive && input.departmentId !== options.currentDepartmentId) {
+    errors.departmentId = "This department is inactive. Choose an active department";
+  }
+  if (branch.length === 0) {
+    errors.branchId = "Choose a branch";
+  } else if (!branch[0].isActive && input.branchId !== options.currentBranchId) {
+    errors.branchId = "This branch is inactive. Choose an active branch";
+  }
 
   if (!errors.email && options.checkLoginEmail) {
     const loginUserId = await findUserIdByEmail(db, input.email);
@@ -417,6 +441,8 @@ export async function updateEmployee(
       fullName: employees.fullName,
       role: employees.role,
       status: employees.status,
+      departmentId: employees.departmentId,
+      branchId: employees.branchId,
     })
     .from(employees)
     .where(eq(employees.id, id))
@@ -439,6 +465,8 @@ export async function updateEmployee(
     employeeId: id,
     checkLoginEmail: current.userId !== null && emailChanged,
     ownUserId: current.userId,
+    currentDepartmentId: current.departmentId,
+    currentBranchId: current.branchId,
   });
   if (Object.keys(fieldErrors).length > 0) return fail(400, CHECK_FIELDS, { fieldErrors });
 

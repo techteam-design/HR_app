@@ -1,25 +1,25 @@
 import { ok, readJson, serviceError, validationError } from "@/server/api-response";
 import { requireApiEmployee } from "@/server/auth.service";
-import { createDepartment, listDepartments } from "@/server/department.service";
-import { createDepartmentSchema } from "@/validations/department";
+import { createBranch, listBranches } from "@/server/branch.service";
+import { createBranchSchema } from "@/validations/branch";
 
-// GET: every department with its active employee count. admin + hr_viewer.
+// GET: every branch with its active employee count. admin + hr_viewer.
 export async function GET() {
   const access = await requireApiEmployee("view_all_records");
   if (!access.ok) return access.response;
 
-  return ok({ items: await listDepartments() });
+  return ok({ items: await listBranches() });
 }
 
-// POST: add a department. admin only (manage_org).
+// POST: add a branch. admin only (manage_org).
 export async function POST(request: Request) {
   const access = await requireApiEmployee("manage_org");
   if (!access.ok) return access.response;
 
-  const parsed = createDepartmentSchema.safeParse(await readJson(request));
+  const parsed = createBranchSchema.safeParse(await readJson(request));
   if (!parsed.success) return validationError(parsed.error);
 
-  const result = await createDepartment(parsed.data);
+  const result = await createBranch(parsed.data);
   if (!result.ok) return serviceError(result);
   return ok({ id: result.id }, 201);
 }

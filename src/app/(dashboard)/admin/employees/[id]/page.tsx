@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { DetailSection } from "@/components/employees/detail-list";
 import { EmployeeActions } from "@/components/employees/employee-actions";
 import { EmployeeStatusBadge } from "@/components/employees/employee-status-badge";
-import { CLASSIFICATION_LABELS, GENDER_LABELS, ROLE_LABELS } from "@/components/employees/labels";
+import { CLASSIFICATION_LABELS, GENDER_LABELS, ROLE_LABELS, unitLabel } from "@/components/employees/labels";
 import { PhotoUpload } from "@/components/employees/photo-upload";
 import { Alert } from "@/components/ui/alert";
 import { Avatar } from "@/components/ui/avatar";
@@ -104,8 +104,8 @@ export default async function EmployeeDetailPage({
           { label: "Designation", value: employee.designation },
           { label: "Join date", value: formatDisplayDate(employee.joinDate) },
           { label: "Classification", value: CLASSIFICATION_LABELS[employee.classification] },
-          { label: "Department", value: employee.departmentName },
-          { label: "Branch", value: employee.branchName },
+          { label: "Department", value: unitLabel(employee.departmentName, employee.departmentIsActive) },
+          { label: "Branch", value: unitLabel(employee.branchName, employee.branchIsActive) },
           {
             label: "Reporting manager",
             value:

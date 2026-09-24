@@ -5,9 +5,9 @@ import { Input, Label } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import type { EmployeeListQuery } from "@/validations/employee";
 
-import { CLASSIFICATION_LABELS, ROLE_LABELS, STATUS_LABELS } from "./labels";
+import { CLASSIFICATION_LABELS, ROLE_LABELS, STATUS_LABELS, unitLabel } from "./labels";
 
-type Option = { id: string; name: string };
+type Option = { id: string; name: string; isActive: boolean };
 
 // Plain GET form: works without JavaScript and keeps filters in the URL.
 export function EmployeeFilters({
@@ -37,7 +37,7 @@ export function EmployeeFilters({
             <option value="">All departments</option>
             {departments.map((d) => (
               <option key={d.id} value={d.id}>
-                {d.name}
+                {unitLabel(d.name, d.isActive)}
               </option>
             ))}
           </Select>
@@ -48,7 +48,7 @@ export function EmployeeFilters({
             <option value="">All branches</option>
             {branches.map((b) => (
               <option key={b.id} value={b.id}>
-                {b.name}
+                {unitLabel(b.name, b.isActive)}
               </option>
             ))}
           </Select>

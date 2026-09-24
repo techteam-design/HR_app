@@ -38,6 +38,19 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 - manager: employee rights + approve/reject for direct reports + team calendar
 - admin: full access, including employees, org structure, policies, approval config, overrides, all reports and exports
 - hr_viewer: read-only for other people's data; can view own profile and apply for own leave. Every write endpoint on other employees' data returns 403.
+- Navigation: the "People" group (Employees, Org chart) needs view_all_records (admin + hr_viewer).
+  The "Admin" group (Departments & branches, Leave policies, Approval setup) is admin only.
+- Employees cannot edit their own profile in this version: /profile is read-only and only ever loads
+  the signed-in employee's own record (never an id from the URL). Changes go through an HR admin.
+
+## Org structure
+- Departments and branches are deactivated, never deleted. Deactivation is refused while any active or
+  probation employee is assigned. Inactive ones are hidden from the employee form's dropdowns but still
+  shown, labelled "(inactive)", on employees who already have them.
+- Names are trimmed, 2–60 characters and unique case-insensitively. The database unique constraint is
+  case-sensitive, so the case-insensitive check lives in src/lib/org/org-units.ts, used by the service.
+- The org chart is built by the pure buildOrgTree() in src/lib/employees/org-tree.ts. People whose manager
+  is inactive, missing or part of a reporting loop go into a "No active manager" group, so nobody disappears.
 
 ## Confirmed leave rules
 ### Annual leave
@@ -97,6 +110,8 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   the Workers Paid plan (about $5/month) may be required.
 - R2 bucket CORS rule for browser photo uploads, when R2 is set up (see Sprint 1 employee report)
 - Client to confirm who approves the owner's / top admin's leave
+- Add case-insensitive unique indexes on departments.name and branches.name (lower(name)) in a future
+  migration; the service check already enforces this.
 
 ## Design system ("D · Lavender silk")
 - Rule: use tokens and src/components/ui components; never hardcode colours (no hex/rgb in components).

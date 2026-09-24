@@ -106,6 +106,95 @@
   }
 }
 
+/*
+ * Org chart (desktop): a top-down tree of cards joined by simple lines.
+ * <ul class="org-tree"><li>card<ul><li>card</li>…</ul></li></ul>
+ * Each nested <ul> draws a line down from the manager; each <li> draws its
+ * half of the horizontal bar plus a line down to its card.
+ */
+@layer components {
+  .org-tree,
+  .org-tree ul {
+    display: flex;
+    justify-content: center;
+  }
+
+  .org-tree {
+    gap: 2rem;
+    width: max-content;
+    min-width: 100%;
+  }
+
+  .org-tree ul {
+    position: relative;
+    padding-top: 1.5rem;
+  }
+
+  .org-tree li {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .org-tree ul > li {
+    padding: 1.5rem 0.5rem 0;
+  }
+
+  .org-tree ul::before,
+  .org-tree ul > li::before,
+  .org-tree ul > li::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    height: 1.5rem;
+    border-color: var(--color-lilac-200);
+    border-style: solid;
+    border-width: 0;
+  }
+
+  .org-tree ul::before {
+    left: 50%;
+    border-left-width: 1.5px;
+  }
+
+  .org-tree ul > li::before {
+    right: 50%;
+    width: 50%;
+    border-top-width: 1.5px;
+  }
+
+  .org-tree ul > li::after {
+    left: 50%;
+    width: 50%;
+    border-top-width: 1.5px;
+    border-left-width: 1.5px;
+  }
+
+  .org-tree ul > li:first-child::before,
+  .org-tree ul > li:last-child::after {
+    border-width: 0;
+  }
+
+  .org-tree ul > li:last-child::before {
+    border-right-width: 1.5px;
+    border-top-right-radius: 10px;
+  }
+
+  .org-tree ul > li:first-child::after {
+    border-top-left-radius: 10px;
+  }
+
+  .org-tree ul > li:only-child {
+    padding-top: 0;
+  }
+
+  .org-tree ul > li:only-child::before,
+  .org-tree ul > li:only-child::after {
+    display: none;
+  }
+}
+
 /* Subtle motion only, and none for people who ask for reduced motion. */
 @media (prefers-reduced-motion: reduce) {
   *,

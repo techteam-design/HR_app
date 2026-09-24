@@ -17,3 +17,8 @@ export const GENDER_LABELS = {
 } as const;
 
 export type EmployeeStatus = keyof typeof STATUS_LABELS;
+
+// Department or branch name, marked when it has been deactivated.
+export function unitLabel(name: string, isActive: boolean): string {
+  return isActive ? name : `${name} (inactive)`;
+}

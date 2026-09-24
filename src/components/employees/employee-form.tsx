@@ -16,7 +16,7 @@ import {
   updateEmployeeSchema,
 } from "@/validations/employee";
 
-import { CLASSIFICATION_LABELS, GENDER_LABELS, ROLE_LABELS, STATUS_LABELS } from "./labels";
+import { CLASSIFICATION_LABELS, GENDER_LABELS, ROLE_LABELS, STATUS_LABELS, unitLabel } from "./labels";
 import { TemporaryPasswordNotice } from "./temporary-password-notice";
 
 export type EmployeeFormValues = {
@@ -221,6 +221,10 @@ export function EmployeeForm(props: Props) {
   }
 
   const opt = props.options;
+  // Inactive departments and branches are not offered, except the one this
+  // employee already has (shown as "(inactive)" so it still displays).
+  const departmentChoices = opt.departments.filter((d) => d.isActive || d.id === initial?.departmentId);
+  const branchChoices = opt.branches.filter((b) => b.isActive || b.id === initial?.branchId);
 
   return (
     <form key={formKey} onSubmit={handleSubmit} noValidate className="space-y-6">
@@ -285,10 +289,9 @@ export function EmployeeForm(props: Props) {
             <option value="" disabled>
               Choose…
             </option>
-            {opt.departments.map((d) => (
+            {departmentChoices.map((d) => (
               <option key={d.id} value={d.id}>
-                {d.name}
-                {d.isActive ? "" : " (inactive)"}
+                {unitLabel(d.name, d.isActive)}
               </option>
             ))}
           </Select>
@@ -298,10 +301,9 @@ export function EmployeeForm(props: Props) {
             <option value="" disabled>
               Choose…
             </option>
-            {opt.branches.map((b) => (
+            {branchChoices.map((b) => (
               <option key={b.id} value={b.id}>
-                {b.name}
-                {b.isActive ? "" : " (inactive)"}
+                {unitLabel(b.name, b.isActive)}
               </option>
             ))}
           </Select>
