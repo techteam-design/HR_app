@@ -2,7 +2,7 @@
 
 Client: Shosha Beauty Company (SBC), Singapore. About 50 employees, local and foreign staff.
 Note: the original proposal used the name Shushute Beauty Hub; the client has confirmed the final name is
-Shosha Beauty Company (SBC). The production domain is still to be confirmed.
+Shosha Beauty Company (SBC). Production domain: hr.sbcwellness.com (see "Project status and history").
 Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 
 ## Tech stack
@@ -109,11 +109,9 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - MC pro-rating rounding rule (up, down or nearest)
 - Carry-forward expiry: none assumed unless the client says otherwise
 - Per-employee approval level assignment rule
-- Domain, brand assets, UAT sign-off person
+- Brand assets (PWA icons, theme colours), UAT sign-off person
 - Database-backed rate limiting before go-live (Sprint 4)
-- Staging deploy on Cloudflare before Sprint 2 to verify password hashing stays within Workers CPU limits;
-  the Workers Paid plan (about $5/month) may be required.
-- R2 bucket CORS rule for browser photo uploads, when R2 is set up (see Sprint 1 employee report)
+- R2 CORS rule for the production bucket and origin, when production is set up
 - Client to confirm who approves the owner's / top admin's leave
 - Add case-insensitive unique indexes on departments.name and branches.name (lower(name)) in a future
   migration; the service check already enforces this.
@@ -143,6 +141,96 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Runtime variables (names in .dev.vars.example) are Worker secrets; none go in wrangler.jsonc.
 - src/proxy.ts runs as Node.js middleware, which OpenNext supports only experimentally.
 - TODO before production: remove the sign-in timing log in src/app/api/auth/[...all]/route.ts.
+
+## Project status and history
+### Sprint 1 (complete)
+- Auth and roles: Better Auth config src/lib/auth/auth.ts, permissions src/lib/auth/rbac.ts, session
+  helpers src/server/auth.service.ts (requireEmployee for pages, requireApiEmployee for APIs), src/proxy.ts,
+  src/app/(auth)/login, src/app/api/auth/[...all].
+- Forced password change: employees.must_change_password; src/app/(auth)/change-password,
+  src/app/api/me/password, src/lib/auth/temporary-password.ts, src/server/login-account.service.ts.
+- Inactive blocking: session-create hook in src/lib/auth/auth.ts, plus the employee check on every request
+  in src/server/auth.service.ts.
+- Employee management: src/app/(dashboard)/admin/employees, src/app/api/employees/**,
+  src/server/employee.service.ts, src/validations/employee.ts, src/components/employees/,
+  pure rules in src/lib/employees/ (admin-guard, reporting, profile-rules, service-length).
+- Departments and branches: src/app/(dashboard)/admin/departments, src/app/api/{departments,branches}/**,
+  src/server/{department,branch,org-unit}.service.ts, src/lib/org/org-units.ts, src/components/org/.
+- Org chart: src/app/(dashboard)/admin/org-chart, src/server/org-chart.service.ts,
+  src/lib/employees/org-tree.ts, src/components/org/org-chart.tsx.
+- My profile: src/app/(dashboard)/profile/page.tsx.
+- Photos: src/server/employee-photo.service.ts, src/lib/employees/photo-key.ts, src/app/api/me/photo/**,
+  src/app/api/employees/[id]/photo, src/components/employees/photo-upload.tsx.
+- Design system: src/app/globals.css, src/components/ui/, src/components/layout/, /design-preview.
+- Seeds: src/db/seed.ts (leave policies), seed-admin.ts (first admin, production-safe),
+  seed-dev.ts (dev data only, needs ALLOW_DEV_SEED=true).
+- Tests: tests/{auth,employees,org,validations,utils}.
+- Still placeholders: src/lib/leave-engine/*.ts (empty files) and tests/leave-engine (todo stubs); leave,
+  approvals, reports and team calendar pages; /api/cron/* (return 501).
+
+### Environments
+- Local dev: Neon "dev" branch (values in .env.local), `npm run dev`.
+- Staging: Cloudflare Worker "hr-app-staging" at https://hr-app-staging.techteam-b75.workers.dev.
+  Uses the Neon dev branch and the R2 bucket sbc-hr-photos-dev. Secrets are set with `wrangler secret put`.
+  The Workers Paid plan is active; sign-in measured at about 300 ms CPU (free plan limit is 10 ms).
+- Production (not set up yet): hr.sbcwellness.com, registered at GoDaddy; DNS moves to Cloudflare in
+  Sprint 3. Production R2 bucket sbc-hr-photos, Neon "production" branch.
+
+### Sprint 1 decisions
+- Logins are created only by admins (sign-up disabled). New logins and admin resets get a random
+  temporary password and must change it on first sign-in. Until then, only the change-password page and
+  API work. Changing a password signs out all other sessions.
+- Passwords are 12–128 characters. Sessions last 7 days and are refreshed daily.
+- Every failed sign-in, including for inactive or unlinked staff, shows the same generic error.
+- Sign-in is limited to 5 attempts per minute per IP (cf-connecting-ip). The limit is kept in memory per
+  Worker instance, not globally (database-backed limiting is Sprint 4).
+- Better Auth's default scrypt hashing must stay. The seed scripts and login-account.service.ts write
+  hashes in that format.
+- Denied pages redirect to /dashboard?denied=1. APIs return 401 JSON when not signed in and 403 JSON when
+  the role is not allowed.
+- src/proxy.ts only checks that a session cookie exists. /api/auth and /api/cron are excluded.
+- Admin protection: an admin cannot deactivate themself or remove their own admin role, and at least one
+  active admin must always remain.
+- A reporting manager change that would create a loop is refused. Employees must be at least 16 years old,
+  and the join date can be at most 90 days in the future.
+- Photos: the database stores only the R2 object key, and the file is shown through a presigned URL.
+  If the image fails to load, Avatar shows initials.
+- Cloudflare setup: images are unoptimised (the Images binding is not used); the incremental cache is
+  served from static assets, so there is no KV or R2 binding; @aws-sdk/client-s3 is transpiled because of a
+  Windows symlink error. The next.config.ts and wrangler.jsonc comments explain each one.
+
+### Known caveats and to-dos
+- src/proxy.ts runs as Node.js middleware, which OpenNext supports only experimentally. Fallbacks:
+  middleware.ts on the edge runtime, or removing the proxy (the server checks are the real protection).
+- Remove the temporary sign-in timing log (src/app/api/auth/[...all]/route.ts) before production.
+- Add case-insensitive unique indexes on departments.name and branches.name (needs a migration).
+- Last-admin race: the admin guard reads the list of active admins and then writes separately. Two
+  simultaneous demotions could leave no active admin. Unlikely at this size; fix with a transaction or lock.
+- Enable Smart Placement (wrangler.jsonc "placement": { "mode": "smart" }) for production, so the Worker
+  runs near the Neon Singapore database.
+- Deploy production from GitHub Actions on Linux rather than from a Windows machine.
+- Dev seed dates drift: seed-dev.ts computes dates from the day it first runs, and re-runs leave existing
+  rows unchanged. Service lengths, and which employee counts as the mid-year joiner, go stale over time.
+
+### Pending client questions
+- Do weekends and public holidays count as leave days?
+- MC pro-rating rounding: up, down or nearest?
+
+### Sprint plan
+- Sprint 2A: entitlement engine, balances, opening balances, leave policies page, daily entitlement job,
+  dashboard balances.
+- Sprint 2B: day counting, leave application, validation, history. Waits for the client's answers above.
+- Sprint 3: approvals, notifications via Resend, notice card, DNS move to Cloudflare.
+- Sprint 4: reports, exports, production go-live.
+
+### How we work
+- The user runs all terminal, database, git and Cloudflare commands themself. Claude may run tsc, eslint,
+  vitest and local builds.
+- Never read .env.local or .dev.vars.
+- Never deploy, run migrations or run seeds unless asked.
+- No schema changes without asking first.
+- Every task report lists the files changed and the tsc, eslint and vitest results.
+- Every task ends with a manual test plan.
 
 ## Conventions
 - File names: lowercase-with-hyphens; services end in .service.ts
