@@ -17,7 +17,7 @@ import {
   findEntitlementEmployee,
   needsEntitlements,
 } from "./entitlement.service";
-import { loadLeavePolicies } from "./leave-policy.service";
+import { loadLeavePolicies, type LeavePolicy } from "./leave-policy.service";
 import { fail, UUID, type ServiceResult } from "./service-result";
 
 export type LeaveTypeBalance = {
@@ -59,9 +59,16 @@ export type EmployeeBalances = {
 // Current-period balances for every leave type. Creates any missing
 // entitlement rows first (lazily), unless the employee is inactive.
 // Returns null when the employee does not exist.
-export async function getEmployeeBalances(employeeId: string, onDate: IsoDate): Promise<EmployeeBalances | null> {
+export async function getEmployeeBalances(
+  employeeId: string,
+  onDate: IsoDate,
+  preloadedPolicies?: LeavePolicy[],
+): Promise<EmployeeBalances | null> {
   if (!UUID.test(employeeId)) return null;
-  const [employee, policies] = await Promise.all([findEntitlementEmployee(employeeId), loadLeavePolicies()]);
+  const [employee, policies] = await Promise.all([
+    findEntitlementEmployee(employeeId),
+    preloadedPolicies ?? loadLeavePolicies(),
+  ]);
   if (!employee) return null;
 
   if (needsEntitlements(employee, onDate)) {

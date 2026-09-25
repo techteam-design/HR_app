@@ -4,7 +4,7 @@
 //
 // Required env: SEED_ADMIN_EMAIL, SEED_ADMIN_NAME, SEED_ADMIN_PASSWORD (12+ chars)
 // Optional env: SEED_ADMIN_EMPLOYEE_CODE (default "ADMIN-001"),
-//               SEED_ADMIN_JOIN_DATE (YYYY-MM-DD, default today in Asia/Singapore)
+//               SEED_ADMIN_JOIN_DATE (YYYY-MM-DD, default today in Asia/Brunei)
 //
 // NOTE: the Better Auth config written later must use the DEFAULT password
 // hashing (no emailAndPassword.password.hash / verify overrides), or this
@@ -29,7 +29,7 @@ import {
   requirePassword,
   runSeed,
   toDateColumn,
-  todayInSingapore,
+  todayInBusinessZone,
 } from "./seed-helpers";
 
 // getDb() is lazy, so loading env here (after imports) is early enough.
@@ -50,7 +50,7 @@ const PLACEHOLDER = {
 
 function readJoinDate(): string {
   const value = process.env.SEED_ADMIN_JOIN_DATE?.trim();
-  if (!value) return toDateColumn(todayInSingapore());
+  if (!value) return toDateColumn(todayInBusinessZone());
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value))) {
     throw new Error("SEED_ADMIN_JOIN_DATE must be a date in YYYY-MM-DD format.");
   }

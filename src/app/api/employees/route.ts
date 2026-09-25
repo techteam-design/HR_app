@@ -1,4 +1,4 @@
-import { todayIsoInSingapore } from "@/lib/utils/dates";
+import { todayIsoInBrunei } from "@/lib/utils/dates";
 import { ok, readJson, serviceError, validationError } from "@/server/api-response";
 import { requireApiEmployee } from "@/server/auth.service";
 import { withPhotoUrls } from "@/server/employee-photo.service";
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
   const access = await requireApiEmployee("manage_employees");
   if (!access.ok) return access.response;
 
-  const parsed = createEmployeeSchema(todayIsoInSingapore()).safeParse(await readJson(request));
+  const parsed = createEmployeeSchema(todayIsoInBrunei()).safeParse(await readJson(request));
   if (!parsed.success) return validationError(parsed.error);
 
   const result = await createEmployee(parsed.data);

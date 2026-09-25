@@ -18,6 +18,11 @@ function cardNote(type: LeaveTypeBalance): string | undefined {
   return undefined;
 }
 
+// " · 2 pending" when requests are waiting for approval.
+function pendingText(type: LeaveTypeBalance): string {
+  return type.balance && type.balance.pending > 0 ? ` · ${formatDays(type.balance.pending)} pending` : "";
+}
+
 // The three arch cards on the dashboard (annual = lilac, MC = blush,
 // unpaid = sage).
 export function BalanceArchCards({ balances, className }: { balances: EmployeeBalances; className?: string }) {
@@ -29,7 +34,11 @@ export function BalanceArchCards({ balances, className }: { balances: EmployeeBa
           tint={LEAVE_TINTS[type.code]}
           label={LEAVE_LABELS[type.code]}
           value={type.balance ? formatDays(type.balance.available) : "—"}
-          caption={type.balance ? `of ${daysLabel(formatDays(type.balance.total), type.balance.total)}` : "No leave period yet"}
+          caption={
+            type.balance
+              ? `of ${daysLabel(formatDays(type.balance.total), type.balance.total)}${pendingText(type)}`
+              : "No leave period yet"
+          }
           note={cardNote(type)}
           progress={type.balance && type.eligible ? availableShare(type.balance) : undefined}
         />
@@ -81,7 +90,10 @@ export function CompactBalances({ balances }: { balances: EmployeeBalances }) {
                   <span className={cn("font-semibold", negative && "text-status-rejected-text")}>
                     {formatDays(type.balance.available)}
                   </span>{" "}
-                  <span className="text-muted">of {daysLabel(formatDays(type.balance.total), type.balance.total)}</span>
+                  <span className="text-muted">
+                    of {daysLabel(formatDays(type.balance.total), type.balance.total)}
+                    {pendingText(type)}
+                  </span>
                   {!type.eligible && (
                     <span className="block text-[13px] text-muted sm:inline sm:pl-2">
                       Available from {formatDisplayDate(type.eligibleFrom)}

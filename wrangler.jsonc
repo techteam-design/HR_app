@@ -29,7 +29,7 @@
       "invocation_logs": true
     }
   },
-  // Daily entitlement job at 16:05 UTC = 00:05 Asia/Singapore (no daylight
+  // Daily entitlement job at 16:05 UTC = 00:05 Asia/Brunei (no daylight
   // saving). Handled by scheduled() in custom-worker.ts, which calls
   // /api/cron/entitlements with CRON_SECRET (a Worker secret).
   "triggers": {

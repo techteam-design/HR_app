@@ -4,7 +4,7 @@
 //
 // The cron sends an in-process request to /api/cron/entitlements with the
 // CRON_SECRET, so the scheduled run and a manual run take exactly the same
-// code path (secret check, Asia/Singapore "today", idempotent inserts).
+// code path (secret check, Asia/Brunei "today", idempotent inserts).
 //
 // Test the scheduled handler locally (CRON_SECRET in .dev.vars):
 //   npm run cf:build && npx wrangler dev --test-scheduled
@@ -22,7 +22,7 @@ type FetchHandler = (request: Request, env: WorkerEnv, ctx: WaitUntil) => Promis
 const worker = openNextWorker as { fetch: FetchHandler };
 
 const JOBS: Record<string, string> = {
-  // 16:05 UTC = 00:05 Asia/Singapore, daily.
+  // 16:05 UTC = 00:05 Asia/Brunei, daily.
   "5 16 * * *": "/api/cron/entitlements",
 };
 

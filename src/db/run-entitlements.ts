@@ -1,4 +1,4 @@
-// Runs the daily entitlement job once, for "today" in Asia/Singapore, against
+// Runs the daily entitlement job once, for "today" in Asia/Brunei, against
 // the database in .env.local. Safe to run any time: it only inserts missing
 // rows for the current periods and never changes existing ones.
 // Use it to create entitlements for all dev employees now, and for production
@@ -22,7 +22,7 @@ async function main() {
 
   const counts = await ensureAllEntitlements();
 
-  console.log(`[${SCRIPT}] Date (Asia/Singapore): ${counts.onDate}`);
+  console.log(`[${SCRIPT}] Date (Asia/Brunei): ${counts.onDate}`);
   console.log(`[${SCRIPT}] Employees checked:     ${counts.employeesChecked}`);
   console.log(`[${SCRIPT}] Employees skipped:     ${counts.employeesSkipped} (inactive or not started yet)`);
   console.log(`[${SCRIPT}] Entitlements created:  ${counts.created}`);

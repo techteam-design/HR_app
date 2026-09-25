@@ -9,7 +9,7 @@ import {
 } from "@/lib/employees/profile-rules";
 
 // Shared by the API routes (server) and the employee form (client).
-// `today` is today's date in Asia/Singapore (todayIsoInSingapore()).
+// `today` is today's date in Asia/Brunei (todayIsoInBrunei()).
 
 const trimmed = (max: number, label: string) =>
   z

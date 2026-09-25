@@ -1,7 +1,7 @@
 import { addDays, addYears, format, isValid, parseISO } from "date-fns";
 
 // Pure profile date rules. All dates are DATE column values ("YYYY-MM-DD");
-// `today` is today's date in Asia/Singapore.
+// `today` is today's date in Asia/Brunei.
 
 export const MIN_EMPLOYEE_AGE = 16;
 export const MAX_JOIN_DAYS_AHEAD = 90;

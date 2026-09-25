@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FieldError, FieldHint, Input, Label } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { todayIsoInSingapore } from "@/lib/utils/dates";
+import { todayIsoInBrunei } from "@/lib/utils/dates";
 import {
   createEmployeeSchema,
   fieldErrorsOf,
@@ -100,6 +100,9 @@ export function EmployeeForm(props: Props) {
 
   const joinDateChanged = props.mode === "edit" && joinDate !== props.initial.joinDate;
   const classificationChanged = props.mode === "edit" && classification !== props.initial.classification;
+  // Hidden while the join date has an error, e.g. the change is blocked by
+  // leave activity (the error explains why nothing will be recalculated).
+  const showJoinDateNotice = joinDateChanged && !errors.joinDate;
 
   const describedBy = (name: string, hint = false) =>
     errors[name] ? `${name}-error` : hint ? `${name}-hint` : undefined;
@@ -130,7 +133,7 @@ export function EmployeeForm(props: Props) {
       ...(props.mode === "create" ? { createLogin: form.get("createLogin") === "on" } : {}),
     };
 
-    const today = todayIsoInSingapore();
+    const today = todayIsoInBrunei();
     const parsed =
       props.mode === "create"
         ? createEmployeeSchema(today).safeParse(values)
@@ -280,9 +283,9 @@ export function EmployeeForm(props: Props) {
             ))}
           </Select>
         </Field>
-        {(joinDateChanged || classificationChanged) && (
+        {(showJoinDateNotice || classificationChanged) && (
           <div className="space-y-2 sm:col-span-2">
-            {joinDateChanged && <Alert tone="notice">{JOIN_DATE_NOTICE}</Alert>}
+            {showJoinDateNotice && <Alert tone="notice">{JOIN_DATE_NOTICE}</Alert>}
             {classificationChanged && <Alert tone="notice">{CLASSIFICATION_NOTICE}</Alert>}
           </div>
         )}

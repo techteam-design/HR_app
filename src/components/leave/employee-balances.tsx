@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { formatDays } from "@/lib/leave-engine/balance";
 import { cn } from "@/lib/utils/cn";
-import { formatDisplayDate, todayIsoInSingapore } from "@/lib/utils/dates";
+import { formatDisplayDate, todayIsoInBrunei } from "@/lib/utils/dates";
 import type { AdjustmentHistoryItem, EmployeeBalances } from "@/server/leave-balance.service";
 
 import { AdjustBalanceButton } from "./adjust-balance-dialog";
@@ -121,7 +121,7 @@ export function EmployeeLeaveBalances({
                     {signed(item.days)} {item.leaveTypeName}
                   </span>
                   <span className="text-[13px] text-muted">
-                    {formatDisplayDate(todayIsoInSingapore(item.createdAt))} · {item.createdByName}
+                    {formatDisplayDate(todayIsoInBrunei(item.createdAt))} · {item.createdByName}
                   </span>
                 </div>
                 <p className="mt-1 text-[13px] text-muted">

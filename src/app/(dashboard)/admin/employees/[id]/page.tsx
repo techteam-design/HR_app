@@ -6,16 +6,19 @@ import { EmployeeActions } from "@/components/employees/employee-actions";
 import { EmployeeStatusBadge } from "@/components/employees/employee-status-badge";
 import { CLASSIFICATION_LABELS, GENDER_LABELS, ROLE_LABELS, unitLabel } from "@/components/employees/labels";
 import { PhotoUpload } from "@/components/employees/photo-upload";
+import { ApplicationList } from "@/components/leave/application-list";
 import { EmployeeLeaveBalances } from "@/components/leave/employee-balances";
 import { Alert } from "@/components/ui/alert";
 import { Avatar } from "@/components/ui/avatar";
+import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { can } from "@/lib/auth/rbac";
 import { isStorageConfigured } from "@/lib/storage/r2";
-import { formatDisplayDate, todayIsoInSingapore } from "@/lib/utils/dates";
+import { formatDisplayDate, todayIsoInBrunei } from "@/lib/utils/dates";
 import { requireEmployee } from "@/server/auth.service";
 import { photoUrlFor } from "@/server/employee-photo.service";
 import { getEmployeeDetail } from "@/server/employee.service";
+import { listApplications } from "@/server/leave-application.service";
 import { getEmployeeBalances, listAdjustments } from "@/server/leave-balance.service";
 
 export default async function EmployeeDetailPage({
@@ -32,10 +35,12 @@ export default async function EmployeeDetailPage({
   const employee = await getEmployeeDetail(id);
   if (!employee) notFound();
 
-  const [photoUrl, balances, adjustments] = await Promise.all([
+  const today = todayIsoInBrunei();
+  const [photoUrl, balances, adjustments, applications] = await Promise.all([
     photoUrlFor(employee.photoKey),
-    getEmployeeBalances(employee.id, todayIsoInSingapore()),
+    getEmployeeBalances(employee.id, today),
     listAdjustments(employee.id),
+    listApplications(employee.id),
   ]);
   const canManage = can(viewer.role, "manage_employees");
   const storageConfigured = isStorageConfigured();
@@ -153,6 +158,25 @@ export default async function EmployeeDetailPage({
           canManage={canManage}
         />
       )}
+
+      <Card className="space-y-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="font-display text-section-title font-medium text-plum-900">
+            Leave <em>requests</em>
+          </h2>
+          {canManage && employee.status !== "inactive" && (
+            <ButtonLink href={`/admin/employees/${employee.id}/apply`} variant="secondary">
+              Apply on behalf
+            </ButtonLink>
+          )}
+        </div>
+        <ApplicationList
+          items={applications}
+          today={today}
+          mode={canManage ? "admin" : "view"}
+          emptyText="No leave requests yet."
+        />
+      </Card>
     </div>
   );
 }

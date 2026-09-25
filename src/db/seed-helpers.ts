@@ -2,6 +2,7 @@ import { TZDate } from "@date-fns/tz";
 import { format } from "date-fns";
 import { eq } from "drizzle-orm";
 
+import { BUSINESS_TIME_ZONE } from "../lib/utils/dates";
 import { normalizeLoginEmail } from "../server/login-account.service";
 
 import type { Database } from "./index";
@@ -13,7 +14,7 @@ export { buildCredentialLogin, findUserIdByEmail } from "../server/login-account
 
 // Shared helpers for the seed scripts (src/db/seed*.ts). Not used by the app.
 
-export const SINGAPORE_TZ = "Asia/Singapore";
+export { BUSINESS_TIME_ZONE };
 export const MIN_SEED_PASSWORD_LENGTH = 12;
 
 export function requireEnv(name: string): string {
@@ -57,8 +58,8 @@ export function normalizeEmail(email: string): string {
   return normalizeLoginEmail(email);
 }
 
-export function todayInSingapore(): TZDate {
-  return TZDate.tz(SINGAPORE_TZ);
+export function todayInBusinessZone(): TZDate {
+  return TZDate.tz(BUSINESS_TIME_ZONE);
 }
 
 // Formats a date as a DATE column value (YYYY-MM-DD) in its own time zone.

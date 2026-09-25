@@ -1,3 +1,4 @@
+import { UpcomingLeaveList } from "@/components/leave/application-list";
 import { BalanceArchCards, LeaveYearCard } from "@/components/leave/balance-cards";
 import { Alert } from "@/components/ui/alert";
 import { ButtonLink } from "@/components/ui/button";
@@ -5,8 +6,9 @@ import { Card } from "@/components/ui/card";
 import { PlusIcon } from "@/components/ui/icons";
 import { PageHeader } from "@/components/ui/page-header";
 import { can } from "@/lib/auth/rbac";
-import { formatDisplayDate, greetingFor, todayIsoInSingapore } from "@/lib/utils/dates";
+import { formatDisplayDate, greetingFor, todayIsoInBrunei } from "@/lib/utils/dates";
 import { requireEmployee } from "@/server/auth.service";
+import { listUpcoming } from "@/server/leave-application.service";
 import { getEmployeeBalances } from "@/server/leave-balance.service";
 
 export default async function DashboardPage({
@@ -18,7 +20,11 @@ export default async function DashboardPage({
   const { denied } = await searchParams;
   const firstName = employee.fullName.trim().split(/\s+/)[0] ?? employee.fullName;
   // Creates any missing entitlement rows for the current periods first.
-  const balances = await getEmployeeBalances(employee.id, todayIsoInSingapore());
+  const today = todayIsoInBrunei();
+  const [balances, upcoming] = await Promise.all([
+    getEmployeeBalances(employee.id, today),
+    listUpcoming(employee.id, today),
+  ]);
 
   return (
     <div className="space-y-8">
@@ -57,7 +63,7 @@ export default async function DashboardPage({
               <LeaveYearCard balances={balances} />
               <Card>
                 <p className="eyebrow text-plum-700">Upcoming leave</p>
-                <p className="mt-3 text-[15px] text-muted">No upcoming leave</p>
+                <UpcomingLeaveList items={upcoming} />
               </Card>
             </div>
           </div>

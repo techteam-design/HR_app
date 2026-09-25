@@ -5,6 +5,7 @@ import { DetailSection } from "@/components/employees/detail-list";
 import { PhotoUpload } from "@/components/employees/photo-upload";
 import { EmployeeStatusBadge } from "@/components/employees/employee-status-badge";
 import { CLASSIFICATION_LABELS, GENDER_LABELS, ROLE_LABELS, unitLabel } from "@/components/employees/labels";
+import { UpcomingLeaveList } from "@/components/leave/application-list";
 import { CompactBalances } from "@/components/leave/balance-cards";
 import { Avatar } from "@/components/ui/avatar";
 import { ButtonLink } from "@/components/ui/button";
@@ -13,10 +14,11 @@ import { KeyIcon } from "@/components/ui/icons";
 import { can } from "@/lib/auth/rbac";
 import { formatServiceLength, lengthOfService } from "@/lib/employees/service-length";
 import { isStorageConfigured } from "@/lib/storage/r2";
-import { formatDisplayDate, todayIsoInSingapore } from "@/lib/utils/dates";
+import { formatDisplayDate, todayIsoInBrunei } from "@/lib/utils/dates";
 import { requireEmployee } from "@/server/auth.service";
 import { photoUrlFor, withPhotoUrls } from "@/server/employee-photo.service";
 import { getEmployeeDetail, listDirectReports } from "@/server/employee.service";
+import { listUpcoming } from "@/server/leave-application.service";
 import { getEmployeeBalances } from "@/server/leave-balance.service";
 
 // The signed-in employee's own record. Never takes an id from the URL or
@@ -25,11 +27,12 @@ export default async function ProfilePage() {
   const viewer = await requireEmployee({ action: "view_own_profile" });
 
   const showTeam = viewer.role === "manager" || viewer.role === "admin";
-  const today = todayIsoInSingapore();
-  const [employee, reports, balances] = await Promise.all([
+  const today = todayIsoInBrunei();
+  const [employee, reports, balances, upcoming] = await Promise.all([
     getEmployeeDetail(viewer.id),
     showTeam ? listDirectReports(viewer.id) : Promise.resolve([]),
     getEmployeeBalances(viewer.id, today),
+    listUpcoming(viewer.id, today),
   ]);
   if (!employee) notFound();
 
@@ -152,6 +155,15 @@ export default async function ProfilePage() {
       )}
 
       {balances?.started && <CompactBalances balances={balances} />}
+
+      {balances?.started && (
+        <Card>
+          <h2 className="font-display text-section-title font-medium text-plum-900">
+            Upcoming <em>leave</em>
+          </h2>
+          <UpcomingLeaveList items={upcoming} />
+        </Card>
+      )}
 
       <p className="text-[13px] text-muted">Something wrong? Contact your HR admin to update your details.</p>
     </div>

@@ -1,7 +1,7 @@
 import { LeavePolicyCards, type PolicyView } from "@/components/leave/leave-policy-cards";
 import { Alert } from "@/components/ui/alert";
 import { AccentTitle, PageHeader } from "@/components/ui/page-header";
-import { formatDisplayDate, todayIsoInSingapore } from "@/lib/utils/dates";
+import { formatDisplayDate, todayIsoInBrunei } from "@/lib/utils/dates";
 import { requireEmployee } from "@/server/auth.service";
 import { loadLeavePolicies } from "@/server/leave-policy.service";
 
@@ -24,7 +24,7 @@ export default async function LeavePoliciesPage() {
     prorateRounding: policy.prorateRounding,
     // Only edits made in the app record who made them (the seed clears it).
     lastChanged: policy.updatedByName
-      ? `${formatDisplayDate(todayIsoInSingapore(policy.updatedAt))} by ${policy.updatedByName}`
+      ? `${formatDisplayDate(todayIsoInBrunei(policy.updatedAt))} by ${policy.updatedByName}`
       : null,
   }));
 

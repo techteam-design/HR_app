@@ -1,6 +1,9 @@
 import { z } from "zod";
 
 import { LEAVE_TYPE_CODES, PRORATE_ROUNDINGS } from "@/lib/leave-engine/constants";
+import { MAX_REQUEST_RANGE_DAYS } from "@/lib/leave-engine/day-selection";
+import { HALF_DAY_SLOTS } from "@/lib/leave-engine/half-day";
+import { parseIsoDate, toIsoDate } from "@/lib/leave-engine/iso-date";
 
 // Shared by the API routes (server) and the leave forms (client).
 
@@ -131,3 +134,88 @@ export const policyUpdateSchema = z.discriminatedUnion("code", [
 ]);
 
 export type PolicyUpdateInput = z.infer<typeof policyUpdateSchema>;
+
+// ---------------------------------------------------------------------------
+// Leave applications
+// ---------------------------------------------------------------------------
+
+export const APPLICATION_STATUSES = ["pending", "approved", "rejected", "cancelled"] as const;
+export type ApplicationStatusFilter = (typeof APPLICATION_STATUSES)[number];
+
+const isRealDate = (value: string) => {
+  try {
+    const [year, month, day] = parseIsoDate(value);
+    return toIsoDate(year, month, day) === value;
+  } catch {
+    return false;
+  }
+};
+
+const isoDate = (message: string) =>
+  z.string({ error: message }).refine(isRealDate, message);
+
+// Empty or whitespace-only text becomes null.
+const optionalText = (label: string, max: number) =>
+  z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() || null : (value ?? null)),
+    z.string().max(max, `${label} must be at most ${max} characters`).nullable(),
+  );
+
+// The business rules (balance, notice, overlap, one period...) are checked
+// by validateApplication in src/lib/leave-engine/validation.ts; this schema
+// only checks the shape of the request.
+export const applicationSchema = z.object({
+  leaveType: z.enum(LEAVE_TYPE_CODES, { error: "Choose a leave type" }),
+  startDate: isoDate("Choose a start date"),
+  endDate: isoDate("Choose an end date"),
+  dayType: z.enum(["full", "half"], { error: "Choose full days or a half day" }),
+  halfDaySlot: z.preprocess(
+    (value) => (value === "" || value === undefined ? null : value),
+    z.enum(HALF_DAY_SLOTS, { error: "Choose morning or afternoon" }).nullable(),
+  ),
+  // The ticked dates only.
+  dates: z
+    .array(isoDate("Invalid date"), { error: "Select at least one day" })
+    .max(MAX_REQUEST_RANGE_DAYS, `A request can cover at most ${MAX_REQUEST_RANGE_DAYS} days`),
+  reason: optionalText("Reason", 500),
+});
+
+export type ApplicationInput = z.infer<typeof applicationSchema>;
+
+// Admin applying on an employee's behalf: may override the foreign
+// advance-notice rule, with a reason.
+export const onBehalfApplicationSchema = applicationSchema
+  .extend({
+    noticeOverride: z.boolean().default(false),
+    overrideReason: optionalText("Override reason", 500),
+  })
+  .superRefine((value, context) => {
+    if (value.noticeOverride && (value.overrideReason?.length ?? 0) < 3) {
+      context.addIssue({
+        code: "custom",
+        path: ["overrideReason"],
+        message: "Give a reason for the override (at least 3 characters)",
+      });
+    }
+  });
+
+export type OnBehalfApplicationInput = z.infer<typeof onBehalfApplicationSchema>;
+
+// The note is required when an admin cancels someone else's request; the
+// service decides whether it is needed.
+export const cancelApplicationSchema = z.object({
+  note: optionalText("Note", 500),
+});
+
+export type CancelApplicationInput = z.infer<typeof cancelApplicationSchema>;
+
+export const MIN_CANCEL_NOTE_LENGTH = 3;
+
+// History filters from the query string; anything invalid means "all".
+export const historyFilterSchema = z.object({
+  type: z.enum(LEAVE_TYPE_CODES).optional().catch(undefined),
+  status: z.enum(APPLICATION_STATUSES).optional().catch(undefined),
+  year: z.coerce.number().int().min(2000).max(2100).optional().catch(undefined),
+});
+
+export type HistoryFilter = z.infer<typeof historyFilterSchema>;

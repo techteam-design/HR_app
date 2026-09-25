@@ -1,5 +1,5 @@
 // Pure length-of-service rule. Dates are DATE column values ("YYYY-MM-DD");
-// `today` is today's date in Asia/Singapore (todayIsoInSingapore()).
+// `today` is today's date in Asia/Brunei (todayIsoInBrunei()).
 
 export type ServiceLength = { years: number; months: number };
 

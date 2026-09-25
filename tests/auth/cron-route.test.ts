@@ -56,7 +56,7 @@ describe("/api/cron/entitlements", () => {
     expect(service.ensureAllEntitlements).not.toHaveBeenCalled();
   });
 
-  it("runs the job for today in Singapore with the right secret (POST and GET)", async () => {
+  it("runs the job for today in Brunei with the right secret (POST and GET)", async () => {
     const response = await POST(request(`Bearer ${SECRET}`));
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ created: 39, employeesSkipped: 1 });

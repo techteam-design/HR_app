@@ -7,6 +7,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   text,
   timestamp,
@@ -203,6 +204,13 @@ export const leaveApplications = pgTable(
     cancelledBy: uuid("cancelled_by").references(() => employees.id, {
       onDelete: "restrict",
     }),
+    // Required when an admin cancels someone else's request.
+    cancellationNote: text("cancellation_note"),
+    // The admin who applied on the employee's behalf; null when the employee
+    // applied themself.
+    submittedBy: uuid("submitted_by").references(() => employees.id, {
+      onDelete: "restrict",
+    }),
     ...timestamps,
   },
   (table) => [
@@ -240,6 +248,36 @@ export const leaveApplications = pgTable(
     check(
       "leave_applications_cancelled_at_check",
       sql`${table.status} <> 'cancelled' OR (${table.cancelledAt} IS NOT NULL AND ${table.cancelledBy} IS NOT NULL)`,
+    ),
+  ],
+);
+
+// The exact dates an application covers: the dates the employee ticked, so
+// their rostered off days are left out. start_date / end_date on the
+// application are the first and last of these. Balances ("used" and
+// "pending") are summed from these rows by date.
+export const leaveApplicationDays = pgTable(
+  "leave_application_days",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    applicationId: uuid("application_id")
+      .notNull()
+      .references(() => leaveApplications.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    // 1.0 for a full day, 0.5 for a half day.
+    portion: numeric("portion", { precision: 2, scale: 1 }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    unique("leave_application_days_application_id_date_unique").on(
+      table.applicationId,
+      table.date,
+    ),
+    // Overlap checks and calendar lookups by date.
+    index("leave_application_days_date_idx").on(table.date),
+    check(
+      "leave_application_days_portion_check",
+      sql`${table.portion} IN (0.5, 1.0)`,
     ),
   ],
 );

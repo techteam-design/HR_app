@@ -2,7 +2,7 @@ import { and, asc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 
 import { getDb } from "@/db";
-import { employees, leaveAdjustments, leaveApplications, leaveEntitlements } from "@/db/schema";
+import { employees, leaveAdjustments, leaveApplicationDays, leaveApplications, leaveEntitlements } from "@/db/schema";
 import {
   currentPeriodFor,
   planEntitlement,
@@ -10,7 +10,7 @@ import {
   type PlannedEntitlement,
 } from "@/lib/leave-engine/entitlement-plan";
 import type { IsoDate } from "@/lib/leave-engine/iso-date";
-import { todayIsoInSingapore } from "@/lib/utils/dates";
+import { todayIsoInBrunei } from "@/lib/utils/dates";
 
 import { loadLeavePolicies, requireAllPolicies, type LeavePolicy } from "./leave-policy.service";
 
@@ -47,8 +47,8 @@ export type StoredEntitlement = {
 
 export type NewEntitlement = Omit<PlannedEntitlement, "code"> & { employeeId: string; leaveTypeId: string };
 
-// Per entitlement row: sum of adjustments, and approved / pending application
-// days whose start date falls inside the row's period.
+// Per entitlement row: sum of adjustments, and the approved / pending
+// application days (leave_application_days) dated inside the row's period.
 export type EntitlementUsage = { adjustments: number; approved: number; pending: number };
 
 // Database access used by the entitlement logic. Replaced by an in-memory
@@ -301,15 +301,16 @@ export const databaseEntitlementStore: EntitlementStore = {
         .from(leaveAdjustments)
         .where(inArray(leaveAdjustments.entitlementId, entitlementIds))
         .groupBy(leaveAdjustments.entitlementId),
-      // An application counts in the period that contains its start date.
+      // Counted per date: each selected date's portion falls in the period
+      // that contains it.
       db
         .select({
           entitlementId: leaveEntitlements.id,
           approved: dayTotal(
-            sql`case when ${leaveApplications.status} = 'approved' then ${leaveApplications.totalDays} end`,
+            sql`case when ${leaveApplications.status} = 'approved' then ${leaveApplicationDays.portion} end`,
           ),
           pending: dayTotal(
-            sql`case when ${leaveApplications.status} = 'pending' then ${leaveApplications.totalDays} end`,
+            sql`case when ${leaveApplications.status} = 'pending' then ${leaveApplicationDays.portion} end`,
           ),
         })
         .from(leaveEntitlements)
@@ -318,8 +319,14 @@ export const databaseEntitlementStore: EntitlementStore = {
           and(
             eq(leaveApplications.employeeId, leaveEntitlements.employeeId),
             eq(leaveApplications.leaveTypeId, leaveEntitlements.leaveTypeId),
-            sql`${leaveApplications.startDate} between ${leaveEntitlements.periodStart} and ${leaveEntitlements.periodEnd}`,
             inArray(leaveApplications.status, ["approved", "pending"]),
+          ),
+        )
+        .innerJoin(
+          leaveApplicationDays,
+          and(
+            eq(leaveApplicationDays.applicationId, leaveApplications.id),
+            sql`${leaveApplicationDays.date} between ${leaveEntitlements.periodStart} and ${leaveEntitlements.periodEnd}`,
           ),
         )
         .where(inArray(leaveEntitlements.id, entitlementIds))
@@ -393,7 +400,7 @@ type Statement = BatchItem<"pg">;
 // fail and the whole batch rolls back.
 export async function joinDateChangeStatements(
   employee: EntitlementEmployee,
-  onDate: IsoDate = todayIsoInSingapore(),
+  onDate: IsoDate = todayIsoInBrunei(),
 ): Promise<{ ok: true; statements: Statement[] } | { ok: false; error: string }> {
   const plan = await planJoinDateChange(databaseEntitlementStore, await loadLeavePolicies(), employee, onDate);
   if (!plan.ok) return plan;
@@ -430,7 +437,7 @@ export async function findEntitlementEmployee(employeeId: string): Promise<Entit
 // their balances are shown. Inactive employees get no new entitlements.
 export async function ensureEntitlements(
   employeeId: string,
-  onDate: IsoDate = todayIsoInSingapore(),
+  onDate: IsoDate = todayIsoInBrunei(),
   policies?: LeavePolicy[],
 ): Promise<EnsureCounts> {
   const employee = await findEntitlementEmployee(employeeId);
@@ -451,7 +458,7 @@ export async function ensureEntitlementsQuietly(employeeId: string): Promise<voi
 
 // Every employee, for the daily job and db:entitlements. Inactive employees
 // are loaded only so they show up in the "skipped" count.
-export async function ensureAllEntitlements(onDate: IsoDate = todayIsoInSingapore()): Promise<EnsureCounts & { onDate: IsoDate }> {
+export async function ensureAllEntitlements(onDate: IsoDate = todayIsoInBrunei()): Promise<EnsureCounts & { onDate: IsoDate }> {
   const db = getDb();
   const [employeeList, policies] = await Promise.all([
     db

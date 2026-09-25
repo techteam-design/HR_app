@@ -34,9 +34,9 @@ import {
   printTarget,
   requirePassword,
   runSeed,
-  SINGAPORE_TZ,
+  BUSINESS_TIME_ZONE,
   toDateColumn,
-  todayInSingapore,
+  todayInBusinessZone,
 } from "./seed-helpers";
 
 // getDb() is lazy, so loading env here (after imports) is early enough.
@@ -73,12 +73,12 @@ type DevEmployee = {
 };
 
 function buildEmployees(): DevEmployee[] {
-  const today = todayInSingapore();
+  const today = todayInBusinessZone();
   const d = toDateColumn;
 
   // Mid-year joiner for MC pro-rating: 1 July this year, or (if 1 July is
   // still in the future) halfway between 1 January and today.
-  const julyFirst = new TZDate(today.getFullYear(), 6, 1, SINGAPORE_TZ);
+  const julyFirst = new TZDate(today.getFullYear(), 6, 1, BUSINESS_TIME_ZONE);
   const midYearJoin =
     today >= julyFirst
       ? d(julyFirst)

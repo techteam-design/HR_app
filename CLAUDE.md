@@ -1,6 +1,8 @@
-# HR & Leave Management App — Shosha Beauty Company (SBC), Singapore
+# HR & Leave Management App — Shosha Beauty Company (SBC), Brunei
 
-Client: Shosha Beauty Company (SBC), Singapore. About 50 employees, local and foreign staff.
+Client: Shosha Beauty Company (SBC), Brunei. About 50 employees, local and foreign staff.
+(Earlier notes said Singapore; the business is in Brunei. The Neon database stays in the Singapore region,
+the closest region to Brunei.)
 Note: the original proposal used the name Shushute Beauty Hub; the client has confirmed the final name is
 Shosha Beauty Company (SBC). Production domain (confirmed): hr.sbcwellness.com.
 Builder: Growwstacks. Mobile-first web app (PWA), no native app.
@@ -31,7 +33,10 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 9. Never hard-delete employees. Deactivate them and keep their records.
 
 ## Dates, time zone and numbers
-- All business dates use the Asia/Singapore time zone. Compute "today" in Asia/Singapore, never server UTC.
+- All business dates use the Asia/Brunei time zone (UTC+8, no daylight saving: the same offset as
+  Singapore). Compute "today" in that zone, never server UTC. The zone is ONE constant,
+  BUSINESS_TIME_ZONE in src/lib/utils/dates.ts (the seed scripts import it too). "Today" is
+  todayIsoInBrunei(); the hour for greetings is bruneiHour().
 - Store leave dates as DATE columns (no time part).
 - Leave day counts can be 0.5, so use numeric/decimal columns, never floating point.
 
@@ -72,7 +77,8 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 ### MC (medical certificate) leave
 - 14 days per calendar year (1 Jan to 31 Dec), for all staff
 - Eligible after 1 month of service
-- Pro-rated for employees who join mid-year
+- Pro-rated for employees who join mid-year, rounded UP to the nearest 0.5 day (client decision; the
+  admin sets "up" on the Leave policies page, no code change)
 - No carry-forward; resets on 1 January
 - Cannot apply for more than the available balance
 
@@ -81,8 +87,16 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 - Tracked separately; never reduces annual or MC balances
 - Always labelled "Unpaid" in history, reports and exports
 
+### Day counting (Phase 1, client-approved "option A")
+- The system has no working week and no public holiday list: public holidays are normal days to the
+  system, and staff are responsible for requesting only their actual working days.
+- Staff have individual rostered off days. When applying, the employee sees every date in the chosen
+  range (e.g. "Mon 14 Oct"), all ticked by default, and unticks their off days and any public holiday
+  that is an off day for them. Only ticked dates count (full day 1, half day 0.5).
+- Automatic public holidays are Phase 2 (see "Phase 2 backlog").
+
 ### Half-day leave
-- Deducts 0.5 day
+- Deducts 0.5 day; only on a single-date request, with a morning or afternoon slot
 - Local staff slots: morning 8:30 AM to 12:30 PM, afternoon 1:30 PM to 5:30 PM
 - Foreign staff slots: morning 9:30 AM to 1:30 PM, afternoon 2:30 PM to 6:30 PM
 
@@ -100,7 +114,7 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 
 ## Leave engine formulas (as implemented, Sprint 2A)
 Pure functions in src/lib/leave-engine/, tested in tests/leave-engine/. Dates are "YYYY-MM-DD" strings;
-"today" is always todayIsoInSingapore(). Day counts are multiples of 0.5.
+"today" is always todayIsoInBrunei() (business time zone, Asia/Brunei). Day counts are multiples of 0.5.
 - Leave year (leave-year.ts): annual service year N runs from the (N-1)th anniversary of join_date to the
   day before the Nth. A 29 Feb join date has its anniversary on 28 Feb in non-leap years. MC and unpaid use
   the calendar year (1 Jan to 31 Dec). No periods exist before the join date.
@@ -115,13 +129,14 @@ Pure functions in src/lib/leave-engine/, tested in tests/leave-engine/. Dates ar
   not yet apply an expiry).
 - MC proration (mc-prorate.ts): joined in this calendar year: 14 x (months from the join month through
   December, join month counted in full) / 12, rounded to a half day by prorate_rounding. Joined earlier: 14.
-  PROVISIONAL: while prorate_rounding is null (client not decided), "nearest half day" is used
-  (PROVISIONAL_MC_ROUNDING in constants.ts). Admin sets the real rule on the Leave policies page.
+  The client decided: round UP to the nearest half day (the admin sets prorate_rounding = "up" on the
+  Leave policies page). While it is still null, "nearest" is used (PROVISIONAL_MC_ROUNDING).
   Unpaid is never prorated.
 - Balance (balance.ts): available = entitled + carried forward + adjustments - used (approved days);
   available after pending = available - pending. A negative result is shown, never hidden.
-- An application counts in the period that contains its start date (Sprint 2B must stop an application
-  from crossing a period boundary, or split it).
+- Used and pending are summed from leave_application_days by date: each ticked date's portion counts in
+  the period that contains that date (usageFor in entitlement.service.ts). An application never
+  crosses a period boundary, so its days are always in one period.
 - Entitlement rows (src/server/entitlement.service.ts): ensureEntitlements creates the current annual, MC
   and unpaid rows for active/probation employees with INSERT ... ON CONFLICT DO NOTHING on (employee,
   type, period_start). Rows are never updated or deleted; carry-forward is fixed when the new row is
@@ -139,8 +154,56 @@ Pure functions in src/lib/leave-engine/, tested in tests/leave-engine/. Dates ar
   take the available balance below 0.
 - Policy edits apply only to rows created afterwards; existing leave years are not recalculated.
 
+## Leave applications (as implemented, Sprint 2B)
+- Per-date selection (day-selection.ts): buildDayOptions({ start, end }) lists every date with its
+  weekday, all selected; totalDays() sums portions; ranges are at most 60 days (MAX_REQUEST_RANGE_DAYS).
+- Half-day slots (half-day.ts): local morning 8:30 AM–12:30 PM, afternoon 1:30 PM–5:30 PM; foreign
+  morning 9:30 AM–1:30 PM, afternoon 2:30 PM–6:30 PM.
+- Which period a date falls in (request-period.ts): annual = the service year containing the date
+  (join-date anniversaries); MC and unpaid = the calendar year. Relative to TODAY's period it is
+  current, next (the period right after), past, or beyond. A request is always checked against the
+  period its ticked dates fall in, never today's period.
+- Next period: allowed, checked against its BASE entitlement computed from the policy without any row
+  (annual = that service year's days; MC = the yearly amount, prorated only if joining that year;
+  unpaid = the allowance) minus pending and approved days already requested in it. Carry-forward and
+  adjustments are ignored until it starts (conservative). No row is created early; the normal job
+  creates it when the period starts and these applications then count automatically. The form says
+  "These dates are in your next leave year (starts {date}). Checked against next year's entitlement;
+  any carried-forward days are added when the new year starts." Two or more periods ahead is refused.
+- Validation (validation.ts, validateApplication returns every failing rule; the form runs it live,
+  the server re-runs it on submit):
+  - approval workflow exists: "Your approval route hasn't been set up yet. Please contact HR."
+  - end not before start; at most 60 days in the range; at least 0.5 day ticked
+  - half day: a single date and a slot
+  - not before the join date; first ticked date on or after eligible-from
+  - backdating: annual and unpaid cannot start before today; MC may start up to 14 days in the past
+    (MC_BACKDATE_DAYS, PROVISIONAL); an admin applying on behalf may backdate any type
+  - foreign annual leave: first ticked date at least advance_notice_days_foreign (14) after today,
+    unless an admin override applies (works across the leave-year boundary)
+  - all ticked dates in ONE period (annual: one leave year; MC/unpaid: one calendar year), else split
+  - balance: annual and MC need available-after-pending >= requested; unpaid needs its allowance
+    (7 + adjustments) minus used and pending >= requested. Past periods need their stored row.
+  - no ticked date already on the employee's own pending or approved requests (any type, per date)
+    (cancelled and rejected ignored). Strict: two half days on the same date are refused too ("You
+    already have a half day on {date}. To take the whole day, cancel that request and apply for a full
+    day.").
+- Submit (src/server/leave-application.service.ts): the application and its leave_application_days
+  rows are inserted in one db.batch. start_date/end_date = first/last ticked date; total_days = sum of
+  portions; status pending, current_level 1; approval_mode and the level 1/2 approvers are snapshotted
+  from approval_workflows.
+- Apply on behalf (admin, /admin/employees/[id]/apply, POST /api/employees/[id]/applications): same
+  form and rules, backdating allowed, submitted_by = the admin. Overriding the foreign notice rule needs
+  override_notice and a reason (notice_overridden, override_by, override_reason).
+- Cancellation (cancellation.ts, POST /api/leave/applications/[id]/cancel): the employee cancels their
+  own pending request any time, and their own approved request only before its first ticked date; an
+  admin cancels any pending or approved request with a required note (cancellation_note). Rejected and
+  cancelled are final. Sets status cancelled, cancelled_at, cancelled_by; balances restore
+  automatically. The update is conditional on the status (and start date) it was checked against.
+- APIs: GET/POST /api/leave/applications (own; the employee always comes from the session),
+  POST /api/leave/applications/[id]/cancel, POST /api/employees/[id]/applications (manage_employees).
+
 ## Proposed leave rules (pending client confirmation)
-### Leave cancellation (for Sprint 2B)
+### Leave cancellation (implemented as proposed in Sprint 2B; still to be confirmed)
 - An employee can cancel their own pending request at any time
 - An employee can cancel their own approved leave only before its start date
 - Admin can cancel any request, with a required note
@@ -151,16 +214,25 @@ Full name, employee ID, join date, date of birth, gender (male/female), phone, e
 designation, department, branch, classification (local/foreign), reporting manager, role,
 status (active / inactive / probation).
 
+## Phase 2 backlog (do NOT build in Phase 1)
+### Automatic public holidays
+- Different rules for local and foreign staff:
+  - Local staff: all Brunei public holidays are off days.
+  - Foreign staff: public holidays are working days, except selected ones: Chinese New Year, Christmas
+    Day, the 1st day of Ramadan, the 1st day of Hari Raya, and 1 January.
+- Some dates depend on moon sighting and are only confirmed the day before, so the list must be
+  editable at short notice.
+- Until then (Phase 1), staff untick public holidays themselves (see "Day counting").
+
 ## Out of scope (do not build)
 Payroll, attendance or biometrics, native app store apps, integration with existing HR tools,
 hospitalisation leave, leave encashment, shift scheduling, performance management.
 
 ## Open items (ask before assuming)
 ### Client questions
-- Weekends and Singapore public holidays in leave day counting: still undecided; handled in Sprint 2B
-  (blocks 2B). Sprint 2A does not count days.
-- MC pro-rating rounding: up, down or nearest. PROVISIONAL default until decided: nearest half day. Admin
-  can set it on the Leave policies page; it applies to MC rows created after the change.
+- Confirm the business is in Brunei (Asia/Brunei time zone, Brunei public holidays for Phase 2).
+- MC backdating window: PROVISIONAL 14 days (MC_BACKDATE_DAYS). Confirm the number, or whether MC
+  should only be submitted after the sick day.
 - Who approves the owner's / top admin's leave
 - Rule for which employees get single-level vs two-level approval
 - Carry-forward expiry (none assumed)
@@ -187,7 +259,13 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Sprint 3 design decision: neon-http only supports db.batch (no interactive transactions), so approvals
   must prevent two concurrent approvals from exceeding a balance. Options to evaluate in Sprint 3: a
   conditional single-statement write, or the neon-serverless WebSocket driver for that path. The same
-  applies to the adjustment negative-balance check (read, then insert).
+  applies to the adjustment negative-balance check (read, then insert) and to leave submission: it
+  checks the balance and overlaps, then inserts, so two simultaneous submissions could both pass.
+- Sprint 3: approvers are snapshotted at submission; decide what happens when a snapshotted approver is
+  deactivated or leaves (reassign pending requests).
+- The join-date activity check (withActivity) looks at application start/end dates; leave applications
+  have no foreign key to entitlement rows, so a request submitted during a join-date change is not
+  blocked by the database.
 - Sprint 3: decide how late approvals or cancellations of previous-period leave affect the carry-forward
   already stored on the new annual row (it is fixed when that row is created).
 - Go-live order: import employees with their correct join dates, then run npm run db:entitlements, then
@@ -220,7 +298,7 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   and scripts/cf-strip-env.mjs removes them. The Worker must only see variables set on Cloudflare.
 - Runtime variables (names in .dev.vars.example) are Worker secrets; none go in wrangler.jsonc.
 - The Worker entry is custom-worker.ts (wrangler "main"). It re-exports OpenNext's fetch handler from
-  .open-next/worker.js and adds scheduled() for the cron trigger "5 16 * * *" (00:05 Singapore). The
+  .open-next/worker.js and adds scheduled() for the cron trigger "5 16 * * *" (00:05 Brunei). The
   scheduled run calls /api/cron/entitlements in-process with CRON_SECRET, so every Worker environment
   needs the CRON_SECRET secret or the daily job fails (visible under the Worker's cron events).
 - src/proxy.ts runs as Node.js middleware, which OpenNext supports only experimentally.
@@ -254,8 +332,7 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 
 ### Sprint 2A (complete)
 - Leave engine: src/lib/leave-engine/ (iso-date, leave-year, entitlement, eligibility, carry-forward,
-  mc-prorate, balance, entitlement-plan, policy-summary, constants). half-day.ts and validation.ts are
-  still empty (Sprint 2B).
+  mc-prorate, balance, entitlement-plan, policy-summary, constants).
 - Services: src/server/entitlement.service.ts (ensureEntitlements, ensureAllEntitlements),
   src/server/leave-balance.service.ts (balances, adjustments), src/server/leave-policy.service.ts.
 - Daily job: src/app/api/cron/entitlements (Bearer CRON_SECRET, constant-time check in
@@ -266,6 +343,45 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   GET /api/leave/balances (own balances). Zod in src/validations/leave.ts.
 - UI (src/components/leave/): dashboard balances (ArchCard) and leave-year card, compact balances on
   My profile, Leave balances + Adjust balance on the employee page, /admin/leave-policies.
+
+### Sprint 2B (complete, manual testing passed)
+- Schema: migration 0001 (drizzle/0001_steep_wasp.sql) adds leave_application_days (per-date rows,
+  portion 1.0 or 0.5, unique per application and date, index on date) and
+  leave_applications.cancellation_note and submitted_by.
+- Engine (src/lib/leave-engine/): day-selection, half-day, request-period, validation, cancellation.
+- Service: src/server/leave-application.service.ts (form context, submit, list, upcoming, cancel).
+  Balances count used and pending per date from leave_application_days.
+- APIs: GET/POST /api/leave/applications, POST /api/leave/applications/[id]/cancel,
+  POST /api/employees/[id]/applications (admin on behalf).
+- Pages: /leave/apply (per-date ticks, half-day slots, live summary, inline errors), /leave/history
+  (filters: type, status, year; expandable dates; cancel), /admin/employees/[id]/apply; "Leave
+  requests" with admin cancel on the employee page; upcoming leave on the dashboard and My profile;
+  pending counts on the balance cards. Components in src/components/leave/.
+- Time zone moved to Asia/Brunei (one constant, BUSINESS_TIME_ZONE).
+- Polish: dates always use three-letter months ("Sep", not "Sept"); a refused submit shows each
+  message once (inline in its section, the top banner only for errors with no section); a negative
+  "After this" balance shows in the error colour.
+- Manual testing passed: full and half days, per-date ticks, eligibility, balance, overlap (including
+  the same-date half-day message), 14-day foreign notice and the admin override, next-period rules,
+  cancel rules, apply on behalf, admin cancel, history filters.
+
+### Sprint 2B decisions
+- Next-period requests are checked against the BASE entitlement only (no row is created early;
+  carry-forward and adjustments are ignored until the period starts). Two or more periods ahead is
+  refused. See "Leave applications".
+- Overlap is strict per date: a second half day on a date that already has one is refused ("You
+  already have a half day on {date}. To take the whole day, cancel that request and apply for a full
+  day.").
+- Helpers renamed for Brunei: todayIsoInBrunei() and bruneiHour().
+- Admin cancellation notes are stored (cancellation_note); on-behalf submissions record the admin
+  (submitted_by).
+
+### Open items carried to Sprint 3
+- Concurrency: submission, approval and the adjustment check all read then write (neon-http has no
+  interactive transactions); see "Internal to-dos".
+- CRON_SECRET must be set as a Worker secret on staging (and later production), or the daily
+  entitlement job fails.
+- Approvals (approver screens, two-level flow, deducting on final approval) and approval emails.
 
 ### Environments
 - Local dev: Neon "dev" branch (values in .env.local), `npm run dev`.
@@ -301,9 +417,10 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 ### Sprint plan
 - Sprint 2A (done): entitlement engine, balances, opening balances, leave policies page, daily
   entitlement job, dashboard balances.
-- Sprint 2B: day counting, leave application, validation, history. Waits for the day-counting answer
-  (see "Open items").
-- Sprint 3: approvals, notifications via Resend, notice card, DNS move to Cloudflare.
+- Sprint 2B (done): per-date day selection, leave application, validation, cancellation, history.
+- Sprint 3 (next): approvals (approver inbox, single and two-level flow, a Level 1 rejection ends the
+  request, balance deducted on final approval), notifications via Resend (including reminders,
+  /api/cron/reminders), the notice card, the concurrency fix, and the DNS move to Cloudflare.
 - Sprint 4: reports, exports, production go-live.
 
 ### How we work

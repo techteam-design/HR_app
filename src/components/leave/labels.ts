@@ -22,3 +22,11 @@ export const ADJUSTMENT_REASON_LABELS = {
 export function daysLabel(days: string, count: number): string {
   return `${days} ${Math.abs(count) === 1 ? "day" : "days"}`;
 }
+
+// "Kelvin Ong", or "Siti Rahman, then Daniel Lim" for two-level approval.
+export function approverRoute(approvers: readonly { level: number; name: string }[]): string {
+  const sorted = [...approvers].sort((a, b) => a.level - b.level);
+  return sorted.map((approver) => approver.name).join(", then ");
+}
+
+export const HALF_DAY_SLOT_LABELS = { morning: "Morning", afternoon: "Afternoon" } as const;

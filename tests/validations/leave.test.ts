@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { fieldErrorsOf } from "@/validations/employee";
-import { adjustmentSchema, policyUpdateSchema } from "@/validations/leave";
+import {
+  adjustmentSchema,
+  applicationSchema,
+  cancelApplicationSchema,
+  historyFilterSchema,
+  policyUpdateSchema,
+} from "@/validations/leave";
 
 describe("adjustmentSchema", () => {
   const valid = { leaveType: "annual", days: "2.5", reason: "opening_balance", note: "Unused days from the old system" };
@@ -67,5 +73,47 @@ describe("policyUpdateSchema", () => {
       policyUpdateSchema.safeParse({ code: "mc", fixedDays: "14", eligibilityMonthsLocal: 30, eligibilityMonthsForeign: 1, prorateRounding: "up" })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("applicationSchema", () => {
+  const valid = {
+    leaveType: "annual",
+    startDate: "2026-10-12",
+    endDate: "2026-10-14",
+    dayType: "full",
+    halfDaySlot: "",
+    dates: ["2026-10-12", "2026-10-14"],
+    reason: "  ",
+  };
+
+  it("accepts a request and normalises empty values to null", () => {
+    expect(applicationSchema.parse(valid)).toMatchObject({ halfDaySlot: null, reason: null });
+  });
+
+  it("rejects impossible dates and bad slots", () => {
+    expect(applicationSchema.safeParse({ ...valid, startDate: "2026-02-30" }).success).toBe(false);
+    expect(applicationSchema.safeParse({ ...valid, dates: ["14/10/2026"] }).success).toBe(false);
+    expect(applicationSchema.safeParse({ ...valid, dayType: "half", halfDaySlot: "evening" }).success).toBe(false);
+  });
+
+  it("caps the number of dates at 60", () => {
+    const dates = Array.from({ length: 61 }, (_, i) => `2026-${String(10 + Math.floor(i / 30)).padStart(2, "0")}-${String((i % 30) + 1).padStart(2, "0")}`);
+    expect(applicationSchema.safeParse({ ...valid, dates }).success).toBe(false);
+  });
+});
+
+describe("cancelApplicationSchema and historyFilterSchema", () => {
+  it("trims the note", () => {
+    expect(cancelApplicationSchema.parse({ note: "  Duplicate " })).toEqual({ note: "Duplicate" });
+    expect(cancelApplicationSchema.parse({})).toEqual({ note: null });
+  });
+
+  it("drops invalid filters", () => {
+    expect(historyFilterSchema.parse({ type: "annual", status: "nope", year: "20x" })).toEqual({
+      type: "annual",
+      status: undefined,
+      year: undefined,
+    });
   });
 });

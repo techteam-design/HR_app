@@ -12,3 +12,15 @@ export type ProrateRounding = (typeof PRORATE_ROUNDINGS)[number];
 export const PROVISIONAL_MC_ROUNDING: ProrateRounding = "nearest";
 
 export type Classification = "local" | "foreign";
+
+// PROVISIONAL (client to confirm): MC may start up to this many days before
+// today, since a medical certificate is often submitted after the sick day.
+// Annual and unpaid leave cannot start in the past. An admin applying on an
+// employee's behalf may backdate any type.
+export const MC_BACKDATE_DAYS = 14;
+
+export const LEAVE_TYPE_NAMES: Record<LeaveTypeCode, string> = {
+  annual: "annual leave",
+  mc: "MC",
+  unpaid: "unpaid leave",
+};

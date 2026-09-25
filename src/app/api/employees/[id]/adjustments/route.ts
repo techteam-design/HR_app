@@ -1,4 +1,4 @@
-import { todayIsoInSingapore } from "@/lib/utils/dates";
+import { todayIsoInBrunei } from "@/lib/utils/dates";
 import { ok, readJson, serviceError, validationError } from "@/server/api-response";
 import { requireApiEmployee } from "@/server/auth.service";
 import { addAdjustment } from "@/server/leave-balance.service";
@@ -14,7 +14,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!parsed.success) return validationError(parsed.error);
 
   const { id } = await params;
-  const result = await addAdjustment(access.employee, id, parsed.data, todayIsoInSingapore());
+  const result = await addAdjustment(access.employee, id, parsed.data, todayIsoInBrunei());
   if (!result.ok) return serviceError(result);
   return ok({ id: result.id, available: result.available }, 201);
 }

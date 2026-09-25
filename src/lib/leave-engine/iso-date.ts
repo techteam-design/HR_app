@@ -1,6 +1,6 @@
 // Calendar arithmetic on DATE column values ("YYYY-MM-DD"). Pure: the values
 // have no time part or time zone, so all maths is done in UTC and printed back
-// as a date string. Callers pass "today" from todayIsoInSingapore().
+// as a date string. Callers pass "today" from todayIsoInBrunei().
 
 export type IsoDate = string;
 

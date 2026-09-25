@@ -1,4 +1,4 @@
-import { todayIsoInSingapore } from "@/lib/utils/dates";
+import { todayIsoInBrunei } from "@/lib/utils/dates";
 import { ok, serviceError } from "@/server/api-response";
 import { requireApiEmployee } from "@/server/auth.service";
 import { getEmployeeBalances, listAdjustments } from "@/server/leave-balance.service";
@@ -9,7 +9,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!access.ok) return access.response;
 
   const { id } = await params;
-  const balances = await getEmployeeBalances(id, todayIsoInSingapore());
+  const balances = await getEmployeeBalances(id, todayIsoInBrunei());
   if (!balances) return serviceError({ status: 404, error: "Employee not found" });
   return ok({ ...balances, adjustments: await listAdjustments(id) });
 }
