@@ -2,7 +2,7 @@
 
 Client: Shosha Beauty Company (SBC), Singapore. About 50 employees, local and foreign staff.
 Note: the original proposal used the name Shushute Beauty Hub; the client has confirmed the final name is
-Shosha Beauty Company (SBC). Production domain: hr.sbcwellness.com (see "Project status and history").
+Shosha Beauty Company (SBC). Production domain (confirmed): hr.sbcwellness.com.
 Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 
 ## Tech stack
@@ -15,6 +15,8 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 - Vitest for unit tests
 - Deployed to Cloudflare via @opennextjs/cloudflare
 - Route protection lives in src/proxy.ts (not middleware.ts)
+- Other approved packages: date-fns and @date-fns/tz (date maths), tsx (runs the seed scripts), dotenv
+  (loads env files for scripts and drizzle-kit), pg (dev dependency, used by drizzle-kit for migrations)
 
 ## Architecture rules (never break these)
 1. No business logic in pages or components. Components only display data and collect input.
@@ -40,13 +42,13 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 - hr_viewer: read-only for other people's data; can view own profile and apply for own leave. Every write endpoint on other employees' data returns 403.
 - Navigation: the "People" group (Employees, Org chart) needs view_all_records (admin + hr_viewer).
   The "Admin" group (Departments & branches, Leave policies, Approval setup) is admin only.
-- Employees cannot edit their own profile details in this version: /profile only ever loads the signed-in
-  employee's own record (never an id from the URL). Changes go through an HR admin. The one exception is
-  the photo (below).
-- Employees can upload or remove their own profile photo from My profile. Admins can change or remove any
-  employee's photo. Photo rules: JPEG/PNG/WebP, max 2 MB, private storage, shown via short-lived signed URLs.
-  Self-service uses update_own_photo (every role) and /api/me/photo, which takes the employee only from the
-  session; the admin routes use manage_employees. Both go through src/server/employee-photo.service.ts.
+- My profile is read-only, except that every employee can upload or remove their own photo.
+  /profile only ever loads the signed-in employee's own record (never an id from the URL). All other
+  changes go through an HR admin.
+- Admins can change or remove any employee's photo. Photo rules: JPEG/PNG/WebP, max 2 MB, private storage,
+  shown via short-lived signed URLs. Self-service uses update_own_photo (every role) and /api/me/photo,
+  which takes the employee only from the session; the admin routes use manage_employees. Both go through
+  src/server/employee-photo.service.ts.
 
 ## Org structure
 - Departments and branches are deactivated, never deleted. Deactivation is refused while any active or
@@ -96,6 +98,13 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
   To fix a wrong adjustment, add a new one that offsets it.
 - Adjustment reasons: opening_balance, correction. Every adjustment needs a note.
 
+## Proposed leave rules (pending client confirmation)
+### Leave cancellation (for Sprint 2B)
+- An employee can cancel their own pending request at any time
+- An employee can cancel their own approved leave only before its start date
+- Admin can cancel any request, with a required note
+- Balances restore automatically because they are calculated from approved applications
+
 ## Employee profile fields
 Full name, employee ID, join date, date of birth, gender (male/female), phone, email, photo (R2),
 designation, department, branch, classification (local/foreign), reporting manager, role,
@@ -105,16 +114,37 @@ status (active / inactive / probation).
 Payroll, attendance or biometrics, native app store apps, integration with existing HR tools,
 hospitalisation leave, leave encashment, shift scheduling, performance management.
 
-## Still open / later (ask before assuming)
-- MC pro-rating rounding rule (up, down or nearest)
-- Carry-forward expiry: none assumed unless the client says otherwise
-- Per-employee approval level assignment rule
-- Brand assets (PWA icons, theme colours), UAT sign-off person
-- Database-backed rate limiting before go-live (Sprint 4)
-- R2 CORS rule for the production bucket and origin, when production is set up
-- Client to confirm who approves the owner's / top admin's leave
-- Add case-insensitive unique indexes on departments.name and branches.name (lower(name)) in a future
-  migration; the service check already enforces this.
+## Open items (ask before assuming)
+### Client questions
+- Weekends and Singapore public holidays in leave day counting (blocks Sprint 2B)
+- MC pro-rating rounding: up, down or nearest. Admin can set it on the Leave policies page once decided;
+  a provisional default applies until then
+- Who approves the owner's / top admin's leave
+- Rule for which employees get single-level vs two-level approval
+- Carry-forward expiry (none assumed)
+- Foreign staff annual leave eligibility: 0 months, per the proposal (only local staff have the 3-month
+  rule); confirm with client
+- Leave cancellation rules (see "Proposed leave rules" above)
+- Brand assets (PWA icons, theme colours) and the UAT sign-off person
+
+### Internal to-dos
+- src/proxy.ts runs as Node.js middleware, which OpenNext supports only experimentally. Fallbacks:
+  middleware.ts on the edge runtime, or removing the proxy (the server checks are the real protection).
+- Remove the temporary sign-in timing log (src/app/api/auth/[...all]/route.ts) before production.
+- Add case-insensitive unique indexes on departments.name and branches.name (lower(name)); needs a
+  migration. The service check already enforces this.
+- Last-admin race: the admin guard reads the list of active admins and then writes separately. Two
+  simultaneous demotions could leave no active admin. Unlikely at this size; fix with a transaction or lock.
+- Enable Smart Placement (wrangler.jsonc "placement": { "mode": "smart" }) for production, so the Worker
+  runs near the Neon Singapore database.
+- Deploy production from GitHub Actions on Linux rather than from a Windows machine.
+- Dev seed dates drift: seed-dev.ts computes dates from the day it first runs, and re-runs leave existing
+  rows unchanged. Service lengths, and which employee counts as the mid-year joiner, go stale over time.
+- Database-backed rate limiting before go-live (Sprint 4).
+- R2 CORS rule for the production bucket and origin, when production is set up.
+- Sprint 3 design decision: neon-http only supports db.batch (no interactive transactions), so approvals
+  must prevent two concurrent approvals from exceeding a balance. Options to evaluate in Sprint 3: a
+  conditional single-statement write, or the neon-serverless WebSocket driver for that path.
 
 ## Design system ("D · Lavender silk")
 - Rule: use tokens and src/components/ui components; never hardcode colours (no hex/rgb in components).
@@ -131,7 +161,8 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Shadow: shadow-float (floating mobile nav). Motion: 150–200ms colour transitions only; reduced motion respected.
 - Components (src/components/ui/): Button / ButtonLink, Input / Label / FieldError / FieldHint, Alert, Card,
   ArchCard, StatusBadge, DateTile, Avatar, Logo, SpaIllustration, SparkleDivider, PageHeader / AccentTitle,
-  Sheet, icons. Layout pieces live in src/components/layout/ (PagePlaceholder, NavLinks, MobileNav, UserPanel).
+  Sheet, Dialog, Checkbox, Select, icons. Layout pieces live in src/components/layout/ (PagePlaceholder,
+  NavLinks, MobileNav, UserPanel).
 - /design-preview (development only) shows every component with sample data.
 
 ## Deployment (Cloudflare Workers)
@@ -199,27 +230,11 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   served from static assets, so there is no KV or R2 binding; @aws-sdk/client-s3 is transpiled because of a
   Windows symlink error. The next.config.ts and wrangler.jsonc comments explain each one.
 
-### Known caveats and to-dos
-- src/proxy.ts runs as Node.js middleware, which OpenNext supports only experimentally. Fallbacks:
-  middleware.ts on the edge runtime, or removing the proxy (the server checks are the real protection).
-- Remove the temporary sign-in timing log (src/app/api/auth/[...all]/route.ts) before production.
-- Add case-insensitive unique indexes on departments.name and branches.name (needs a migration).
-- Last-admin race: the admin guard reads the list of active admins and then writes separately. Two
-  simultaneous demotions could leave no active admin. Unlikely at this size; fix with a transaction or lock.
-- Enable Smart Placement (wrangler.jsonc "placement": { "mode": "smart" }) for production, so the Worker
-  runs near the Neon Singapore database.
-- Deploy production from GitHub Actions on Linux rather than from a Windows machine.
-- Dev seed dates drift: seed-dev.ts computes dates from the day it first runs, and re-runs leave existing
-  rows unchanged. Service lengths, and which employee counts as the mid-year joiner, go stale over time.
-
-### Pending client questions
-- Do weekends and public holidays count as leave days?
-- MC pro-rating rounding: up, down or nearest?
-
 ### Sprint plan
 - Sprint 2A: entitlement engine, balances, opening balances, leave policies page, daily entitlement job,
   dashboard balances.
-- Sprint 2B: day counting, leave application, validation, history. Waits for the client's answers above.
+- Sprint 2B: day counting, leave application, validation, history. Waits for the day-counting answer
+  (see "Open items").
 - Sprint 3: approvals, notifications via Resend, notice card, DNS move to Cloudflare.
 - Sprint 4: reports, exports, production go-live.
 
