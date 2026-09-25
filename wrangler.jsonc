@@ -4,7 +4,9 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "hr-app-staging",
-  "main": ".open-next/worker.js",
+  // custom-worker.ts wraps the generated .open-next/worker.js and adds the
+  // scheduled() handler for the cron trigger below.
+  "main": "custom-worker.ts",
   // Latest date supported by the installed workerd runtime (1.20260921.x).
   "compatibility_date": "2026-09-21",
   // nodejs_compat: node:crypto (Better Auth scrypt), Buffer, etc.
@@ -26,8 +28,13 @@
       "head_sampling_rate": 1,
       "invocation_logs": true
     }
+  },
+  // Daily entitlement job at 16:05 UTC = 00:05 Asia/Singapore (no daylight
+  // saving). Handled by scheduled() in custom-worker.ts, which calls
+  // /api/cron/entitlements with CRON_SECRET (a Worker secret).
+  "triggers": {
+    "crons": ["5 16 * * *"]
   }
-  // No cron triggers yet (Sprint 2).
   // No R2 binding: photos use the S3 API with keys (src/lib/storage/r2.ts).
   // No images binding: next/image runs unoptimized (next.config.ts).
 }

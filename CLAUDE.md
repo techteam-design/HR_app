@@ -98,6 +98,47 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
   To fix a wrong adjustment, add a new one that offsets it.
 - Adjustment reasons: opening_balance, correction. Every adjustment needs a note.
 
+## Leave engine formulas (as implemented, Sprint 2A)
+Pure functions in src/lib/leave-engine/, tested in tests/leave-engine/. Dates are "YYYY-MM-DD" strings;
+"today" is always todayIsoInSingapore(). Day counts are multiples of 0.5.
+- Leave year (leave-year.ts): annual service year N runs from the (N-1)th anniversary of join_date to the
+  day before the Nth. A 29 Feb join date has its anniversary on 28 Feb in non-leap years. MC and unpaid use
+  the calendar year (1 Jan to 31 Dec). No periods exist before the join date.
+- Annual entitlement (entitlement.ts): the policy table's days for the service year; any year beyond the
+  highest entry uses that entry (seed: 7 to 14, 14 from year 8).
+- Eligibility (eligibility.ts): eligible from = join date + the policy's eligibility months for the
+  classification (seed: annual 3 local / 0 foreign, MC 1, unpaid 0); a missing day becomes the month's
+  last day. Eligibility never reduces the entitlement, it only sets when applying may start (Sprint 2B).
+- Carry-forward (carry-forward.ts): unused = entitled + carried forward + adjustments - approved days of the
+  previous annual period, never below 0; carried = min(unused, cap); forfeited = unused - carried. With an
+  expiry set, carry_forward_expires_on = new period start + N months - 1 day (none by default; balances do
+  not yet apply an expiry).
+- MC proration (mc-prorate.ts): joined in this calendar year: 14 x (months from the join month through
+  December, join month counted in full) / 12, rounded to a half day by prorate_rounding. Joined earlier: 14.
+  PROVISIONAL: while prorate_rounding is null (client not decided), "nearest half day" is used
+  (PROVISIONAL_MC_ROUNDING in constants.ts). Admin sets the real rule on the Leave policies page.
+  Unpaid is never prorated.
+- Balance (balance.ts): available = entitled + carried forward + adjustments - used (approved days);
+  available after pending = available - pending. A negative result is shown, never hidden.
+- An application counts in the period that contains its start date (Sprint 2B must stop an application
+  from crossing a period boundary, or split it).
+- Entitlement rows (src/server/entitlement.service.ts): ensureEntitlements creates the current annual, MC
+  and unpaid rows for active/probation employees with INSERT ... ON CONFLICT DO NOTHING on (employee,
+  type, period_start). Rows are never updated or deleted; carry-forward is fixed when the new row is
+  created. ONE EXCEPTION, join-date changes: when an admin changes a join date, the employee's current
+  rows (period contains today, any leave type) are deleted and regenerated from the new join date in the
+  same db.batch as the employee update, but only if none of them has an adjustment or a leave application
+  (any status). They are derived data with no history, so replacing them is safe. If any current row has
+  activity, the change is refused ("This employee already has leave activity in the current period.
+  Contact support to correct the join date."). Past-period rows are never touched
+  (planJoinDateChange / joinDateChangeStatements in entitlement.service.ts).
+- Classification changes need no recalculation: entitlement days do not depend on classification, and
+  eligibility and the foreign advance-notice rule are computed live from the current classification. No historical backfill: with no previous-period row, carried forward is 0 (use an
+  opening_balance adjustment). Runs on employee create, reactivate, every balance view, and daily.
+- Adjustments attach to the employee's current period for the leave type and are refused if they would
+  take the available balance below 0.
+- Policy edits apply only to rows created afterwards; existing leave years are not recalculated.
+
 ## Proposed leave rules (pending client confirmation)
 ### Leave cancellation (for Sprint 2B)
 - An employee can cancel their own pending request at any time
@@ -116,9 +157,10 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 
 ## Open items (ask before assuming)
 ### Client questions
-- Weekends and Singapore public holidays in leave day counting (blocks Sprint 2B)
-- MC pro-rating rounding: up, down or nearest. Admin can set it on the Leave policies page once decided;
-  a provisional default applies until then
+- Weekends and Singapore public holidays in leave day counting: still undecided; handled in Sprint 2B
+  (blocks 2B). Sprint 2A does not count days.
+- MC pro-rating rounding: up, down or nearest. PROVISIONAL default until decided: nearest half day. Admin
+  can set it on the Leave policies page; it applies to MC rows created after the change.
 - Who approves the owner's / top admin's leave
 - Rule for which employees get single-level vs two-level approval
 - Carry-forward expiry (none assumed)
@@ -144,7 +186,14 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - R2 CORS rule for the production bucket and origin, when production is set up.
 - Sprint 3 design decision: neon-http only supports db.batch (no interactive transactions), so approvals
   must prevent two concurrent approvals from exceeding a balance. Options to evaluate in Sprint 3: a
-  conditional single-statement write, or the neon-serverless WebSocket driver for that path.
+  conditional single-statement write, or the neon-serverless WebSocket driver for that path. The same
+  applies to the adjustment negative-balance check (read, then insert).
+- Sprint 3: decide how late approvals or cancellations of previous-period leave affect the carry-forward
+  already stored on the new annual row (it is fixed when that row is created).
+- Go-live order: import employees with their correct join dates, then run npm run db:entitlements, then
+  load opening balances as opening_balance adjustments. (Once a current row has an adjustment, its join
+  date can no longer be changed in the app.)
+- Carry-forward expiry is stored (carry_forward_expires_on) but not yet applied to balances.
 
 ## Design system ("D · Lavender silk")
 - Rule: use tokens and src/components/ui components; never hardcode colours (no hex/rgb in components).
@@ -170,6 +219,10 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   `opennextjs-cloudflare build` before deploying: OpenNext bundles .env / .env.local values into the Worker,
   and scripts/cf-strip-env.mjs removes them. The Worker must only see variables set on Cloudflare.
 - Runtime variables (names in .dev.vars.example) are Worker secrets; none go in wrangler.jsonc.
+- The Worker entry is custom-worker.ts (wrangler "main"). It re-exports OpenNext's fetch handler from
+  .open-next/worker.js and adds scheduled() for the cron trigger "5 16 * * *" (00:05 Singapore). The
+  scheduled run calls /api/cron/entitlements in-process with CRON_SECRET, so every Worker environment
+  needs the CRON_SECRET secret or the daily job fails (visible under the Worker's cron events).
 - src/proxy.ts runs as Node.js middleware, which OpenNext supports only experimentally.
 - TODO before production: remove the sign-in timing log in src/app/api/auth/[...all]/route.ts.
 
@@ -196,8 +249,23 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Seeds: src/db/seed.ts (leave policies), seed-admin.ts (first admin, production-safe),
   seed-dev.ts (dev data only, needs ALLOW_DEV_SEED=true).
 - Tests: tests/{auth,employees,org,validations,utils}.
-- Still placeholders: src/lib/leave-engine/*.ts (empty files) and tests/leave-engine (todo stubs); leave,
-  approvals, reports and team calendar pages; /api/cron/* (return 501).
+- Still placeholders after Sprint 1: leave, approvals, reports and team calendar pages;
+  /api/cron/reminders (returns 501).
+
+### Sprint 2A (complete)
+- Leave engine: src/lib/leave-engine/ (iso-date, leave-year, entitlement, eligibility, carry-forward,
+  mc-prorate, balance, entitlement-plan, policy-summary, constants). half-day.ts and validation.ts are
+  still empty (Sprint 2B).
+- Services: src/server/entitlement.service.ts (ensureEntitlements, ensureAllEntitlements),
+  src/server/leave-balance.service.ts (balances, adjustments), src/server/leave-policy.service.ts.
+- Daily job: src/app/api/cron/entitlements (Bearer CRON_SECRET, constant-time check in
+  src/lib/auth/cron-secret.ts), custom-worker.ts + the wrangler.jsonc trigger, and npm run db:entitlements
+  (src/db/run-entitlements.ts) for a one-off run against .env.local.
+- APIs: GET /api/employees/[id]/balances (view_all_records), POST /api/employees/[id]/adjustments
+  (manage_employees), GET/PATCH /api/leave-policies (read view_all_records, write manage_policies),
+  GET /api/leave/balances (own balances). Zod in src/validations/leave.ts.
+- UI (src/components/leave/): dashboard balances (ArchCard) and leave-year card, compact balances on
+  My profile, Leave balances + Adjust balance on the employee page, /admin/leave-policies.
 
 ### Environments
 - Local dev: Neon "dev" branch (values in .env.local), `npm run dev`.
@@ -231,8 +299,8 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   Windows symlink error. The next.config.ts and wrangler.jsonc comments explain each one.
 
 ### Sprint plan
-- Sprint 2A: entitlement engine, balances, opening balances, leave policies page, daily entitlement job,
-  dashboard balances.
+- Sprint 2A (done): entitlement engine, balances, opening balances, leave policies page, daily
+  entitlement job, dashboard balances.
 - Sprint 2B: day counting, leave application, validation, history. Waits for the day-counting answer
   (see "Open items").
 - Sprint 3: approvals, notifications via Resend, notice card, DNS move to Cloudflare.

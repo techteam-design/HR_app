@@ -5,7 +5,7 @@ import { DetailSection } from "@/components/employees/detail-list";
 import { PhotoUpload } from "@/components/employees/photo-upload";
 import { EmployeeStatusBadge } from "@/components/employees/employee-status-badge";
 import { CLASSIFICATION_LABELS, GENDER_LABELS, ROLE_LABELS, unitLabel } from "@/components/employees/labels";
-import { PlaceholderPanel } from "@/components/layout/page-placeholder";
+import { CompactBalances } from "@/components/leave/balance-cards";
 import { Avatar } from "@/components/ui/avatar";
 import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -17,6 +17,7 @@ import { formatDisplayDate, todayIsoInSingapore } from "@/lib/utils/dates";
 import { requireEmployee } from "@/server/auth.service";
 import { photoUrlFor, withPhotoUrls } from "@/server/employee-photo.service";
 import { getEmployeeDetail, listDirectReports } from "@/server/employee.service";
+import { getEmployeeBalances } from "@/server/leave-balance.service";
 
 // The signed-in employee's own record. Never takes an id from the URL or
 // query string: the only record loaded is the one linked to the session.
@@ -24,9 +25,11 @@ export default async function ProfilePage() {
   const viewer = await requireEmployee({ action: "view_own_profile" });
 
   const showTeam = viewer.role === "manager" || viewer.role === "admin";
-  const [employee, reports] = await Promise.all([
+  const today = todayIsoInSingapore();
+  const [employee, reports, balances] = await Promise.all([
     getEmployeeDetail(viewer.id),
     showTeam ? listDirectReports(viewer.id) : Promise.resolve([]),
+    getEmployeeBalances(viewer.id, today),
   ]);
   if (!employee) notFound();
 
@@ -34,7 +37,7 @@ export default async function ProfilePage() {
   const canViewRecords = can(viewer.role, "view_all_records");
   // Photo controls are hidden while storage is not set up.
   const canChangePhoto = can(viewer.role, "update_own_photo") && isStorageConfigured();
-  const service = lengthOfService(employee.joinDate, todayIsoInSingapore());
+  const service = lengthOfService(employee.joinDate, today);
   const dash = <span className="text-muted">—</span>;
 
   return (
@@ -148,11 +151,7 @@ export default async function ProfilePage() {
         </Card>
       )}
 
-      <PlaceholderPanel
-        title="Leave balances"
-        sprint="Sprint 2"
-        description="Your leave balances will appear here."
-      />
+      {balances?.started && <CompactBalances balances={balances} />}
 
       <p className="text-[13px] text-muted">Something wrong? Contact your HR admin to update your details.</p>
     </div>

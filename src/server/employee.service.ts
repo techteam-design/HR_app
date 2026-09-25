@@ -22,6 +22,7 @@ import {
   type EmployeeListQuery,
 } from "@/validations/employee";
 
+import { ensureEntitlementsQuietly, JOIN_DATE_BLOCKED, joinDateChangeStatements } from "./entitlement.service";
 import {
   buildCredentialLogin,
   findUserIdByEmail,
@@ -102,6 +103,15 @@ function uniqueViolation(error: unknown): ServiceError | null {
     current = (current as { cause?: unknown }).cause;
   }
   return null;
+}
+
+function isForeignKeyViolation(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; current && depth < 5; depth += 1) {
+    if ((current as { code?: string }).code === "23503") return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -405,6 +415,7 @@ export async function createEmployee(
   try {
     if (!input.createLogin) {
       await getDb().insert(employees).values({ ...values, mustChangePassword: true });
+      await ensureEntitlementsQuietly(id);
       return { ok: true, id, temporaryPassword: null };
     }
 
@@ -420,6 +431,7 @@ export async function createEmployee(
       db.insert(account).values(login.accountRow),
       db.insert(employees).values({ ...values, userId: login.userId, mustChangePassword: true }),
     ]);
+    await ensureEntitlementsQuietly(id);
     return { ok: true, id, temporaryPassword };
   } catch (error) {
     const mapped = uniqueViolation(error);
@@ -443,6 +455,7 @@ export async function updateEmployee(
       fullName: employees.fullName,
       role: employees.role,
       status: employees.status,
+      joinDate: employees.joinDate,
       departmentId: employees.departmentId,
       branchId: employees.branchId,
     })
@@ -485,11 +498,30 @@ export async function updateEmployee(
     );
   }
 
+  // A new join date replaces the current-period entitlement rows (only when
+  // they have no adjustments or applications), in the same transaction.
+  // Classification changes need nothing: eligibility is computed live.
+  const joinDateChanged = input.joinDate !== current.joinDate;
+  if (joinDateChanged) {
+    const change = await joinDateChangeStatements({
+      id,
+      joinDate: input.joinDate,
+      classification: input.classification,
+      status: nextStatus,
+    });
+    if (!change.ok) return fail(409, change.error, { fieldErrors: { joinDate: change.error } });
+    statements.push(...change.statements);
+  }
+
   try {
     await runBatch(statements);
   } catch (error) {
     const mapped = uniqueViolation(error);
     if (mapped) return mapped;
+    // An adjustment added after the check blocks the delete (foreign key).
+    if (joinDateChanged && isForeignKeyViolation(error)) {
+      return fail(409, JOIN_DATE_BLOCKED, { fieldErrors: { joinDate: JOIN_DATE_BLOCKED } });
+    }
     throw error;
   }
   return { ok: true, id };
@@ -591,6 +623,8 @@ export async function reactivateEmployee(id: string): Promise<ServiceResult> {
     .update(employees)
     .set({ status: "active", deactivatedAt: null })
     .where(eq(employees.id, id));
+  // Entitlements for the current periods (none were created while inactive).
+  await ensureEntitlementsQuietly(id);
   return { ok: true };
 }
 

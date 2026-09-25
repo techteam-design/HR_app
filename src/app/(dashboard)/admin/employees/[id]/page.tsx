@@ -6,15 +6,17 @@ import { EmployeeActions } from "@/components/employees/employee-actions";
 import { EmployeeStatusBadge } from "@/components/employees/employee-status-badge";
 import { CLASSIFICATION_LABELS, GENDER_LABELS, ROLE_LABELS, unitLabel } from "@/components/employees/labels";
 import { PhotoUpload } from "@/components/employees/photo-upload";
+import { EmployeeLeaveBalances } from "@/components/leave/employee-balances";
 import { Alert } from "@/components/ui/alert";
 import { Avatar } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
 import { can } from "@/lib/auth/rbac";
 import { isStorageConfigured } from "@/lib/storage/r2";
-import { formatDisplayDate } from "@/lib/utils/dates";
+import { formatDisplayDate, todayIsoInSingapore } from "@/lib/utils/dates";
 import { requireEmployee } from "@/server/auth.service";
 import { photoUrlFor } from "@/server/employee-photo.service";
 import { getEmployeeDetail } from "@/server/employee.service";
+import { getEmployeeBalances, listAdjustments } from "@/server/leave-balance.service";
 
 export default async function EmployeeDetailPage({
   params,
@@ -30,7 +32,11 @@ export default async function EmployeeDetailPage({
   const employee = await getEmployeeDetail(id);
   if (!employee) notFound();
 
-  const photoUrl = await photoUrlFor(employee.photoKey);
+  const [photoUrl, balances, adjustments] = await Promise.all([
+    photoUrlFor(employee.photoKey),
+    getEmployeeBalances(employee.id, todayIsoInSingapore()),
+    listAdjustments(employee.id),
+  ]);
   const canManage = can(viewer.role, "manage_employees");
   const storageConfigured = isStorageConfigured();
   const dash = <span className="text-muted">—</span>;
@@ -138,6 +144,15 @@ export default async function EmployeeDetailPage({
           },
         ]}
       />
+
+      {balances && (
+        <EmployeeLeaveBalances
+          employeeId={employee.id}
+          balances={balances}
+          adjustments={adjustments}
+          canManage={canManage}
+        />
+      )}
     </div>
   );
 }

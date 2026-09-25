@@ -1,11 +1,13 @@
-import { PlaceholderPanel } from "@/components/layout/page-placeholder";
+import { BalanceArchCards, LeaveYearCard } from "@/components/leave/balance-cards";
 import { Alert } from "@/components/ui/alert";
 import { ButtonLink } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { PlusIcon } from "@/components/ui/icons";
 import { PageHeader } from "@/components/ui/page-header";
 import { can } from "@/lib/auth/rbac";
-import { greetingFor } from "@/lib/utils/dates";
+import { formatDisplayDate, greetingFor, todayIsoInSingapore } from "@/lib/utils/dates";
 import { requireEmployee } from "@/server/auth.service";
+import { getEmployeeBalances } from "@/server/leave-balance.service";
 
 export default async function DashboardPage({
   searchParams,
@@ -15,6 +17,8 @@ export default async function DashboardPage({
   const employee = await requireEmployee();
   const { denied } = await searchParams;
   const firstName = employee.fullName.trim().split(/\s+/)[0] ?? employee.fullName;
+  // Creates any missing entitlement rows for the current periods first.
+  const balances = await getEmployeeBalances(employee.id, todayIsoInSingapore());
 
   return (
     <div className="space-y-8">
@@ -36,11 +40,29 @@ export default async function DashboardPage({
         }
       />
 
-      <PlaceholderPanel
-        title="Your leave at a glance"
-        sprint="Sprint 2"
-        description="Your leave balances, pending requests and upcoming leave will appear here."
-      />
+      {balances && !balances.started ? (
+        <Alert tone="notice">
+          Your leave balances start on your join date, {formatDisplayDate(balances.joinDate)}.
+        </Alert>
+      ) : (
+        balances && (
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+            <section aria-labelledby="balances-title" className="space-y-4">
+              <h2 id="balances-title" className="font-display text-section-title font-medium text-plum-900">
+                Your <em>balances</em>
+              </h2>
+              <BalanceArchCards balances={balances} />
+            </section>
+            <div className="space-y-6 lg:pt-12">
+              <LeaveYearCard balances={balances} />
+              <Card>
+                <p className="eyebrow text-plum-700">Upcoming leave</p>
+                <p className="mt-3 text-[15px] text-muted">No upcoming leave</p>
+              </Card>
+            </div>
+          </div>
+        )
+      )}
     </div>
   );
 }

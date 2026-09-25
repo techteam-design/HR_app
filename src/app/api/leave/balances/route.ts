@@ -1,7 +1,15 @@
-import { NextResponse } from "next/server";
+import { todayIsoInSingapore } from "@/lib/utils/dates";
+import { ok, serviceError } from "@/server/api-response";
+import { requireApiEmployee } from "@/server/auth.service";
+import { getEmployeeBalances } from "@/server/leave-balance.service";
 
-// Placeholder: built in Sprint 2.
+// GET: the signed-in employee's own current balances. Every role. The
+// employee always comes from the session, never from the request.
+export async function GET() {
+  const access = await requireApiEmployee();
+  if (!access.ok) return access.response;
 
-export function GET() {
-  return NextResponse.json({ error: "Not implemented yet" }, { status: 501 });
+  const balances = await getEmployeeBalances(access.employee.id, todayIsoInSingapore());
+  if (!balances) return serviceError({ status: 404, error: "Employee not found" });
+  return ok(balances);
 }

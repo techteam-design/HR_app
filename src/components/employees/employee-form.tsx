@@ -48,7 +48,9 @@ type Props =
 
 type Created = { id: string; email: string; temporaryPassword: string | null };
 
-const LEAVE_WARNING = "This affects leave rules and entitlements.";
+const JOIN_DATE_NOTICE = "Leave balances will be recalculated for the current period.";
+const CLASSIFICATION_NOTICE =
+  "Leave eligibility and the advance-notice rule follow the new classification. Balances do not change.";
 
 function Field({
   name,
@@ -96,9 +98,8 @@ export function EmployeeForm(props: Props) {
   const [joinDate, setJoinDate] = useState(initial?.joinDate ?? "");
   const [formKey, setFormKey] = useState(0);
 
-  const leaveFieldsChanged =
-    props.mode === "edit" &&
-    (classification !== props.initial.classification || joinDate !== props.initial.joinDate);
+  const joinDateChanged = props.mode === "edit" && joinDate !== props.initial.joinDate;
+  const classificationChanged = props.mode === "edit" && classification !== props.initial.classification;
 
   const describedBy = (name: string, hint = false) =>
     errors[name] ? `${name}-error` : hint ? `${name}-hint` : undefined;
@@ -279,9 +280,10 @@ export function EmployeeForm(props: Props) {
             ))}
           </Select>
         </Field>
-        {leaveFieldsChanged && (
-          <div className="sm:col-span-2">
-            <Alert tone="notice">{LEAVE_WARNING}</Alert>
+        {(joinDateChanged || classificationChanged) && (
+          <div className="space-y-2 sm:col-span-2">
+            {joinDateChanged && <Alert tone="notice">{JOIN_DATE_NOTICE}</Alert>}
+            {classificationChanged && <Alert tone="notice">{CLASSIFICATION_NOTICE}</Alert>}
           </div>
         )}
         <Field name="departmentId" label="Department" error={errors.departmentId}>
