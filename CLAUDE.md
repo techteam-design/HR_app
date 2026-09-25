@@ -136,6 +136,14 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   Sheet, icons. Layout pieces live in src/components/layout/ (PagePlaceholder, NavLinks, MobileNav, UserPanel).
 - /design-preview (development only) shows every component with sample data.
 
+## Deployment (Cloudflare Workers)
+- Always build with `npm run cf:build` (also used by cf:preview and cf:deploy:staging), never a bare
+  `opennextjs-cloudflare build` before deploying: OpenNext bundles .env / .env.local values into the Worker,
+  and scripts/cf-strip-env.mjs removes them. The Worker must only see variables set on Cloudflare.
+- Runtime variables (names in .dev.vars.example) are Worker secrets; none go in wrangler.jsonc.
+- src/proxy.ts runs as Node.js middleware, which OpenNext supports only experimentally.
+- TODO before production: remove the sign-in timing log in src/app/api/auth/[...all]/route.ts.
+
 ## Conventions
 - File names: lowercase-with-hyphens; services end in .service.ts
 - Import alias: @/ points to src/

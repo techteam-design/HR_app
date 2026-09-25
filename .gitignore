@@ -47,3 +47,4 @@ next-env.d.ts
 .open-next/
 !.env.example
 .dev.vars*
+!.dev.vars.example

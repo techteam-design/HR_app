@@ -1,0 +1,33 @@
+// STAGING Worker for the HR app (Next.js via @opennextjs/cloudflare).
+// Secrets are never stored here: set them with `npx wrangler secret put <NAME>`.
+// See .dev.vars.example for the list of names.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hr-app-staging",
+  "main": ".open-next/worker.js",
+  // Latest date supported by the installed workerd runtime (1.20260921.x).
+  "compatibility_date": "2026-09-21",
+  // nodejs_compat: node:crypto (Better Auth scrypt), Buffer, etc.
+  // global_fetch_strictly_public: recommended by the OpenNext template.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  // Static files (.next/static, public/) and prerendered pages, served by
+  // Cloudflare without running the Worker. OpenNext needs the ASSETS binding.
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  // Served at https://hr-app-staging.<account-subdomain>.workers.dev
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true
+    }
+  }
+  // No cron triggers yet (Sprint 2).
+  // No R2 binding: photos use the S3 API with keys (src/lib/storage/r2.ts).
+  // No images binding: next/image runs unoptimized (next.config.ts).
+}
