@@ -113,8 +113,9 @@ export const PHOTO_TYPES = {
 } as const;
 export type PhotoContentType = keyof typeof PHOTO_TYPES;
 
-export const photoUploadRequestSchema = z.object({
-  employeeId: z.uuid("Invalid employee"),
+// The file being uploaded. Unknown keys (such as an employeeId sent to the
+// self-service route) are stripped, never used.
+export const photoFileSchema = z.object({
   contentType: z.enum(Object.keys(PHOTO_TYPES) as [PhotoContentType, ...PhotoContentType[]], {
     error: "Photo must be a JPEG, PNG or WebP image",
   }),
@@ -123,6 +124,11 @@ export const photoUploadRequestSchema = z.object({
     .int()
     .positive("Photo is empty")
     .max(PHOTO_MAX_BYTES, "Photo must be 2 MB or smaller"),
+});
+
+// Admin upload for any employee.
+export const photoUploadRequestSchema = photoFileSchema.extend({
+  employeeId: z.uuid("Invalid employee"),
 });
 
 export const photoConfirmSchema = z.object({

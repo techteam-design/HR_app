@@ -16,10 +16,10 @@ import {
 
 // The full permission table. Any change to rbac.ts must be reflected here.
 const EXPECTED: Record<Role, Action[]> = {
-  employee: ["view_own_profile", "apply_leave"],
-  manager: ["view_own_profile", "apply_leave", "approve_leave", "view_team_calendar"],
+  employee: ["view_own_profile", "update_own_photo", "apply_leave"],
+  manager: ["view_own_profile", "update_own_photo", "apply_leave", "approve_leave", "view_team_calendar"],
   admin: [...ACTIONS],
-  hr_viewer: ["view_own_profile", "apply_leave", "view_all_records", "view_reports"],
+  hr_viewer: ["view_own_profile", "update_own_photo", "apply_leave", "view_all_records", "view_reports"],
 };
 
 const WRITE_ACTIONS = ACTIONS.filter((action) => ACTION_KIND[action] === "write");
@@ -60,6 +60,20 @@ describe("hr_viewer is read-only", () => {
 
   it("cannot export data", () => {
     expect(can("hr_viewer", "export_data")).toBe(false);
+  });
+});
+
+describe("photos", () => {
+  it("every role can update their own photo", () => {
+    for (const role of ROLES) expect(can(role, "update_own_photo")).toBe(true);
+  });
+
+  it("only admin can manage other employees (including their photos)", () => {
+    for (const role of ROLES) expect(can(role, "manage_employees")).toBe(role === "admin");
+  });
+
+  it("update_own_photo is a self action, so hr_viewer stays read-only for others", () => {
+    expect(ACTION_KIND.update_own_photo).toBe("self");
   });
 });
 

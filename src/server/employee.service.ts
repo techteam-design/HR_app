@@ -683,6 +683,7 @@ export async function getEmployeePhotoKey(id: string): Promise<string | null | u
   return row ? row.photoKey : undefined;
 }
 
-export async function setEmployeePhotoKey(id: string, photoKey: string): Promise<void> {
+// null clears the photo.
+export async function setEmployeePhotoKey(id: string, photoKey: string | null): Promise<void> {
   await getDb().update(employees).set({ photoKey }).where(eq(employees.id, id));
 }

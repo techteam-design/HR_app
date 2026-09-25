@@ -7,6 +7,7 @@ export type Role = (typeof ROLES)[number];
 
 export const ACTIONS = [
   "view_own_profile",
+  "update_own_photo",
   "apply_leave",
   "approve_leave",
   "view_team_calendar",
@@ -26,6 +27,7 @@ export type Action = (typeof ACTIONS)[number];
 // "write": changing other people's data or company configuration.
 export const ACTION_KIND: Record<Action, "self" | "read" | "write"> = {
   view_own_profile: "self",
+  update_own_photo: "self",
   apply_leave: "self",
   approve_leave: "write",
   view_team_calendar: "read",
@@ -39,7 +41,8 @@ export const ACTION_KIND: Record<Action, "self" | "read" | "write"> = {
   export_data: "read",
 };
 
-const EMPLOYEE_ACTIONS: readonly Action[] = ["view_own_profile", "apply_leave"];
+// Every role, hr_viewer included: acting on your own records only.
+const EMPLOYEE_ACTIONS: readonly Action[] = ["view_own_profile", "update_own_photo", "apply_leave"];
 
 const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
   employee: new Set(EMPLOYEE_ACTIONS),

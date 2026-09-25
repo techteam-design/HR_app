@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { DetailSection } from "@/components/employees/detail-list";
+import { PhotoUpload } from "@/components/employees/photo-upload";
 import { EmployeeStatusBadge } from "@/components/employees/employee-status-badge";
 import { CLASSIFICATION_LABELS, GENDER_LABELS, ROLE_LABELS, unitLabel } from "@/components/employees/labels";
 import { PlaceholderPanel } from "@/components/layout/page-placeholder";
@@ -11,6 +12,7 @@ import { Card } from "@/components/ui/card";
 import { KeyIcon } from "@/components/ui/icons";
 import { can } from "@/lib/auth/rbac";
 import { formatServiceLength, lengthOfService } from "@/lib/employees/service-length";
+import { isStorageConfigured } from "@/lib/storage/r2";
 import { formatDisplayDate, todayIsoInSingapore } from "@/lib/utils/dates";
 import { requireEmployee } from "@/server/auth.service";
 import { photoUrlFor, withPhotoUrls } from "@/server/employee-photo.service";
@@ -30,6 +32,8 @@ export default async function ProfilePage() {
 
   const [photoUrl, team] = await Promise.all([photoUrlFor(employee.photoKey), withPhotoUrls(reports)]);
   const canViewRecords = can(viewer.role, "view_all_records");
+  // Photo controls are hidden while storage is not set up.
+  const canChangePhoto = can(viewer.role, "update_own_photo") && isStorageConfigured();
   const service = lengthOfService(employee.joinDate, todayIsoInSingapore());
   const dash = <span className="text-muted">—</span>;
 
@@ -47,6 +51,7 @@ export default async function ProfilePage() {
             <EmployeeStatusBadge status={employee.status} />
           </div>
         </div>
+        {canChangePhoto && <PhotoUpload target="self" hasPhoto={!!employee.photoKey} />}
       </Card>
 
       <DetailSection

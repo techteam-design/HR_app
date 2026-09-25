@@ -40,8 +40,13 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 - hr_viewer: read-only for other people's data; can view own profile and apply for own leave. Every write endpoint on other employees' data returns 403.
 - Navigation: the "People" group (Employees, Org chart) needs view_all_records (admin + hr_viewer).
   The "Admin" group (Departments & branches, Leave policies, Approval setup) is admin only.
-- Employees cannot edit their own profile in this version: /profile is read-only and only ever loads
-  the signed-in employee's own record (never an id from the URL). Changes go through an HR admin.
+- Employees cannot edit their own profile details in this version: /profile only ever loads the signed-in
+  employee's own record (never an id from the URL). Changes go through an HR admin. The one exception is
+  the photo (below).
+- Employees can upload or remove their own profile photo from My profile. Admins can change or remove any
+  employee's photo. Photo rules: JPEG/PNG/WebP, max 2 MB, private storage, shown via short-lived signed URLs.
+  Self-service uses update_own_photo (every role) and /api/me/photo, which takes the employee only from the
+  session; the admin routes use manage_employees. Both go through src/server/employee-photo.service.ts.
 
 ## Org structure
 - Departments and branches are deactivated, never deleted. Deactivation is refused while any active or

@@ -63,7 +63,7 @@ export default async function EmployeeDetailPage({
           </div>
         </div>
         {canManage && storageConfigured && (
-          <PhotoUpload employeeId={employee.id} hasPhoto={!!employee.photoKey} />
+          <PhotoUpload target={{ employeeId: employee.id }} hasPhoto={!!employee.photoKey} />
         )}
       </Card>
 

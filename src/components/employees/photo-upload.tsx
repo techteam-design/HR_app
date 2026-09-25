@@ -4,17 +4,37 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, type ChangeEvent } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { FieldError } from "@/components/ui/input";
 import { PHOTO_MAX_BYTES, PHOTO_TYPES } from "@/validations/employee";
 
-// Admin-only photo upload. Only rendered when R2 storage is configured.
-// 1) ask the server for a presigned upload URL, 2) upload straight to R2,
-// 3) ask the server to verify and save it.
-export function PhotoUpload({ employeeId, hasPhoto }: { employeeId: string; hasPhoto: boolean }) {
+// Whose photo this controls: "self" (My profile, any role) uses /api/me/photo,
+// which takes the employee from the session; { employeeId } is the admin flow.
+export type PhotoTarget = "self" | { employeeId: string };
+
+function endpointsFor(target: PhotoTarget) {
+  if (target === "self") {
+    return { uploadUrl: "/api/me/photo/upload-url", photo: "/api/me/photo", extra: {} };
+  }
+  return {
+    uploadUrl: "/api/upload",
+    photo: `/api/employees/${target.employeeId}/photo`,
+    extra: { employeeId: target.employeeId },
+  };
+}
+
+// Change or remove a photo. Only rendered when R2 storage is configured.
+// Upload: 1) ask the server for a presigned upload URL, 2) upload straight to
+// R2, 3) ask the server to verify and save it. router.refresh() then re-renders
+// the page and the layout, so every avatar (sidebar, mobile bar, Account sheet)
+// picks up the change.
+export function PhotoUpload({ target, hasPhoto }: { target: PhotoTarget; hasPhoto: boolean }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [pending, setPending] = useState(false);
+  const [pending, setPending] = useState<"upload" | "remove" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const endpoints = endpointsFor(target);
 
   async function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -31,34 +51,34 @@ export function PhotoUpload({ employeeId, hasPhoto }: { employeeId: string; hasP
       return;
     }
 
-    setPending(true);
+    setPending("upload");
     try {
-      const presign = await fetch("/api/upload", {
+      const presign = await fetch(endpoints.uploadUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ employeeId, contentType: file.type, size: file.size }),
+        body: JSON.stringify({ ...endpoints.extra, contentType: file.type, size: file.size }),
       });
-      const target = (await presign.json().catch(() => null)) as {
+      const upload = (await presign.json().catch(() => null)) as {
         uploadUrl?: string;
         key?: string;
         headers?: Record<string, string>;
         error?: string;
       } | null;
-      if (!presign.ok || !target?.uploadUrl || !target.key) {
-        setError(target?.error ?? "Could not start the upload.");
+      if (!presign.ok || !upload?.uploadUrl || !upload.key) {
+        setError(upload?.error ?? "Could not start the upload.");
         return;
       }
 
-      const upload = await fetch(target.uploadUrl, { method: "PUT", headers: target.headers, body: file });
-      if (!upload.ok) {
+      const put = await fetch(upload.uploadUrl, { method: "PUT", headers: upload.headers, body: file });
+      if (!put.ok) {
         setError("The upload failed. Please try again.");
         return;
       }
 
-      const saved = await fetch(`/api/employees/${employeeId}/photo`, {
+      const saved = await fetch(endpoints.photo, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ key: target.key }),
+        body: JSON.stringify({ key: upload.key }),
       });
       if (!saved.ok) {
         const body = (await saved.json().catch(() => null)) as { error?: string } | null;
@@ -69,7 +89,26 @@ export function PhotoUpload({ employeeId, hasPhoto }: { employeeId: string; hasP
     } catch {
       setError("Could not upload the photo. Check your connection and try again.");
     } finally {
-      setPending(false);
+      setPending(null);
+    }
+  }
+
+  async function handleRemove() {
+    setPending("remove");
+    setError(null);
+    try {
+      const response = await fetch(endpoints.photo, { method: "DELETE" });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        setError(body?.error ?? "Could not remove the photo.");
+      } else {
+        router.refresh();
+      }
+    } catch {
+      setError("Could not remove the photo. Check your connection and try again.");
+    } finally {
+      setPending(null);
+      setConfirmRemove(false);
     }
   }
 
@@ -84,10 +123,48 @@ export function PhotoUpload({ employeeId, hasPhoto }: { employeeId: string; hasP
         tabIndex={-1}
         aria-hidden="true"
       />
-      <Button variant="secondary" onClick={() => inputRef.current?.click()} loading={pending} loadingText="Uploading…">
-        {hasPhoto ? "Change photo" : "Upload photo"}
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="secondary"
+          onClick={() => inputRef.current?.click()}
+          loading={pending === "upload"}
+          loadingText="Uploading…"
+          disabled={pending !== null}
+        >
+          {hasPhoto ? "Change photo" : "Upload photo"}
+        </Button>
+        {hasPhoto && (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setError(null);
+              setConfirmRemove(true);
+            }}
+            disabled={pending !== null}
+          >
+            Remove photo
+          </Button>
+        )}
+      </div>
       <FieldError>{error}</FieldError>
+
+      <Dialog open={confirmRemove} onClose={() => pending === null && setConfirmRemove(false)} title="Remove photo">
+        <div className="space-y-5">
+          <p className="text-[15px] text-muted">
+            {target === "self"
+              ? "Your photo will be deleted and your initials shown instead. You can upload a new photo at any time."
+              : "This employee's photo will be deleted and their initials shown instead. You can upload a new photo at any time."}
+          </p>
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <Button variant="secondary" onClick={() => setConfirmRemove(false)} disabled={pending !== null}>
+              Cancel
+            </Button>
+            <Button onClick={handleRemove} loading={pending === "remove"} loadingText="Removing…">
+              Remove photo
+            </Button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }
