@@ -9,16 +9,18 @@ import { SignOutButton } from "./sign-out-button";
 export function UserPanel({
   name,
   subtitle,
+  photoUrl,
   onNavigate,
 }: {
   name: string;
   subtitle: string;
+  photoUrl?: string | null;
   onNavigate?: () => void;
 }) {
   return (
     <div className="space-y-1">
       <div className="mb-2 flex items-center gap-3 rounded-card bg-lilac-50 p-3">
-        <Avatar name={name} size="md" />
+        <Avatar name={name} src={photoUrl} size="md" />
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-plum-900">{name}</p>
           <p className="truncate text-[13px] text-muted">{subtitle}</p>

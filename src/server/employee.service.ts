@@ -46,6 +46,8 @@ const sessionEmployeeColumns = {
   status: employees.status,
   classification: employees.classification,
   mustChangePassword: employees.mustChangePassword,
+  // For the signed-in user's own avatar in the navigation.
+  photoKey: employees.photoKey,
 };
 
 export type SessionEmployee = NonNullable<Awaited<ReturnType<typeof findEmployeeByUserId>>>;

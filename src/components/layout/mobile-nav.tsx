@@ -41,10 +41,12 @@ export function MobileNav({
   items,
   name,
   subtitle,
+  photoUrl,
 }: {
   items: NavItem[];
   name: string;
   subtitle: string;
+  photoUrl?: string | null;
 }) {
   const pathname = usePathname();
   const [sheet, setSheet] = useState<"more" | "account" | null>(null);
@@ -115,7 +117,7 @@ export function MobileNav({
           aria-haspopup="dialog"
           className="flex size-11 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-plum-700"
         >
-          <Avatar name={name} size="sm" />
+          <Avatar name={name} src={photoUrl} size="sm" />
         </button>
       </header>
 
@@ -146,7 +148,7 @@ export function MobileNav({
       </Sheet>
 
       <Sheet open={sheet === "account"} onClose={close} title="Account">
-        <UserPanel name={name} subtitle={subtitle} onNavigate={close} />
+        <UserPanel name={name} subtitle={subtitle} photoUrl={photoUrl} onNavigate={close} />
       </Sheet>
     </>
   );
