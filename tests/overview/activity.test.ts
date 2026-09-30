@@ -10,6 +10,9 @@ const event = (overrides: Partial<ActivityEvent>): ActivityEvent => ({
   employeeName: "Priya Nair",
   actorName: null,
   level: null,
+  code: "mc",
+  startDate: "2026-09-30",
+  endDate: "2026-09-30",
   ...overrides,
 });
 
@@ -23,18 +26,24 @@ describe("activity", () => {
     expect(recentActivity(events, 2).map((e) => e.applicationId)).toEqual(["new", "mid"]);
   });
 
-  it("activityText", () => {
-    expect(activityText(event({}))).toBe("Priya Nair requested leave");
-    expect(activityText(event({ actorName: "Vaidik Dubey" }))).toBe("Vaidik Dubey requested leave for Priya Nair");
-    expect(activityText(event({ kind: "approved", actorName: "Daniel Tan", level: 1 }))).toBe(
-      "Daniel Tan approved Priya Nair's request (level 1)",
+  it("activityText includes the leave type and dates", () => {
+    expect(activityText(event({}))).toBe("Priya Nair requested MC · 30 Sep");
+    const annual = { code: "annual" as const, startDate: "2026-10-19", endDate: "2026-10-20" };
+    expect(activityText(event({ ...annual, actorName: "Vaidik Dubey" }))).toBe(
+      "Vaidik Dubey requested annual leave for Priya Nair · 19–20 Oct",
     );
+    expect(
+      activityText(event({ ...annual, kind: "approved", employeeName: "Maria Santos", actorName: "Daniel Tan", level: 1 })),
+    ).toBe("Daniel Tan approved Maria Santos's annual leave · 19–20 Oct (level 1)");
     expect(activityText(event({ kind: "rejected", actorName: "Daniel Tan" }))).toBe(
-      "Daniel Tan rejected Priya Nair's request",
+      "Daniel Tan rejected Priya Nair's MC · 30 Sep",
     );
-    expect(activityText(event({ kind: "cancelled", actorName: "Priya Nair" }))).toBe(
-      "Priya Nair cancelled Priya Nair's leave",
-    );
+    expect(
+      activityText(
+        event({ kind: "cancelled", code: "unpaid", actorName: "Vaidik Dubey", employeeName: "Kelvin Ong", startDate: "2026-10-30", endDate: "2026-11-02" }),
+      ),
+    ).toBe("Vaidik Dubey cancelled Kelvin Ong's unpaid leave · 30 Oct – 2 Nov");
+    expect(activityText(event({ kind: "approved" }))).toBe("Someone approved Priya Nair's MC · 30 Sep");
   });
 
   it("groupBy keeps first-seen order", () => {

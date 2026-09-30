@@ -44,18 +44,20 @@ export const ACTION_KIND: Record<Action, "self" | "read" | "write"> = {
   export_data: "read",
 };
 
-// Every role, hr_viewer included: acting on your own records only.
-const EMPLOYEE_ACTIONS: readonly Action[] = ["view_own_profile", "update_own_photo", "apply_leave"];
+// Every role, hr_viewer included: acting on your own records, plus the team
+// calendar (employees see approved leave only, without the leave type; the
+// service decides what each role sees).
+const EMPLOYEE_ACTIONS: readonly Action[] = ["view_own_profile", "update_own_photo", "apply_leave", "view_team_calendar"];
 
 const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
   employee: new Set(EMPLOYEE_ACTIONS),
-  manager: new Set([...EMPLOYEE_ACTIONS, "approve_leave", "view_team_calendar"]),
+  manager: new Set([...EMPLOYEE_ACTIONS, "approve_leave"]),
   // The admin (the owner) takes no leave: everything except applying for
   // their own leave. They still apply on staff's behalf (manage_employees).
   admin: new Set(ACTIONS.filter((action) => action !== "apply_leave")),
   // Read-only across the company (including the team calendar and the
   // approval setup). May manage only their own leave.
-  hr_viewer: new Set([...EMPLOYEE_ACTIONS, "view_all_records", "view_team_calendar", "view_reports"]),
+  hr_viewer: new Set([...EMPLOYEE_ACTIONS, "view_all_records", "view_reports"]),
 };
 
 export function can(role: Role, action: Action): boolean {

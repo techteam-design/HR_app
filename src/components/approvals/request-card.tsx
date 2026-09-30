@@ -81,7 +81,7 @@ export function RequestCard({ item }: { item: QueueItem }) {
             />
           )}
           {item.canCancel && !item.decideAs && (
-            <CancelApplicationButton applicationId={item.id} summary={summary} noteRequired label="Cancel leave" />
+            <CancelApplicationButton applicationId={item.id} summary={summary} kind="leave" />
           )}
         </div>
       </div>

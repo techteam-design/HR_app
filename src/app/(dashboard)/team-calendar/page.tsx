@@ -17,8 +17,16 @@ const navLink =
   "inline-flex min-h-11 items-center rounded-full px-4 text-sm font-semibold text-plum-700 hover:bg-lilac-50 " +
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-plum-700";
 
-// Team calendar: managers see their team (direct reports and everyone they
-// approve); admins and HR viewers see everyone, with filters.
+// Team calendar, for every role. Managers see their team (direct reports and
+// everyone they approve); admins and HR viewers see everyone, with filters;
+// employees see everyone's approved leave without the leave type, filtered
+// to their own branch by default. The service decides what each role gets.
+
+const INTRO = {
+  everyone: "Approved and pending leave for everyone.",
+  team: "Approved and pending leave for your direct reports and everyone you approve.",
+  company: "Who is on approved leave. Showing your branch; choose All branches to see everyone.",
+} as const;
 export default async function TeamCalendarPage({
   searchParams,
 }: {
@@ -32,8 +40,8 @@ export default async function TeamCalendarPage({
 
   const linkFor = (target: string) => {
     const params = new URLSearchParams({ month: target });
-    if (filter.departmentId) params.set("departmentId", filter.departmentId);
-    if (filter.branchId) params.set("branchId", filter.branchId);
+    if (calendar.filter.departmentId) params.set("departmentId", calendar.filter.departmentId);
+    if (calendar.filter.branchId) params.set("branchId", calendar.filter.branchId);
     return `/team-calendar?${params}`;
   };
 
@@ -46,20 +54,15 @@ export default async function TeamCalendarPage({
           </>
         }
       />
-      <p className="text-[15px] text-muted">
-        {calendar.scope === "everyone"
-          ? "Approved and pending leave for everyone."
-          : "Approved and pending leave for your direct reports and everyone you approve."}{" "}
-        Approved leave is solid; pending leave is outlined.
-      </p>
+      <p className="text-[15px] text-muted">{INTRO[calendar.scope]}</p>
 
-      {calendar.scope === "everyone" && (
+      {calendar.scope !== "team" && (
         <Card>
           <form method="get" className="grid gap-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
             <input type="hidden" name="month" value={month} />
             <div className="space-y-2">
               <Label htmlFor="calendar-department">Department</Label>
-              <Select id="calendar-department" name="departmentId" defaultValue={filter.departmentId ?? ""}>
+              <Select id="calendar-department" name="departmentId" defaultValue={calendar.filter.departmentId ?? ""}>
                 <option value="">All departments</option>
                 {calendar.departments.map((department) => (
                   <option key={department.id} value={department.id}>
@@ -70,8 +73,8 @@ export default async function TeamCalendarPage({
             </div>
             <div className="space-y-2">
               <Label htmlFor="calendar-branch">Branch</Label>
-              <Select id="calendar-branch" name="branchId" defaultValue={filter.branchId ?? ""}>
-                <option value="">All branches</option>
+              <Select id="calendar-branch" name="branchId" defaultValue={calendar.filter.branchId ?? "all"}>
+                <option value="all">All branches</option>
                 {calendar.branches.map((branch) => (
                   <option key={branch.id} value={branch.id}>
                     {branch.name}
@@ -104,6 +107,7 @@ export default async function TeamCalendarPage({
       <TeamCalendarView
         month={month}
         today={today}
+        scope={calendar.scope}
         entries={calendar.entries}
         applications={calendar.applications}
       />

@@ -67,7 +67,7 @@ export function ApplicationList({
                 <CancelApplicationButton
                   applicationId={item.id}
                   summary={`${LEAVE_LABELS[item.code]}, ${range} (${days})`}
-                  noteRequired={mode === "admin"}
+                  kind={mode === "admin" ? "leave" : "own_request"}
                 />
               )}
             </div>

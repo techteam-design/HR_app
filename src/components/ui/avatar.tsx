@@ -5,6 +5,8 @@ import { useState } from "react";
 import { cn } from "@/lib/utils/cn";
 
 const sizes = {
+  // Calendar entries.
+  xs: "size-6 text-[10px]",
   sm: "size-9 text-xs",
   md: "size-11 text-sm",
   lg: "size-14 text-base",

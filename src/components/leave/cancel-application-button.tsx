@@ -8,20 +8,28 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { FieldError, FieldHint, Input, Label } from "@/components/ui/input";
 
-// Cancel with confirmation. An approver or admin cancelling someone else's
-// request must give a note; the server enforces who may cancel what.
+const TEXT = {
+  own_request: { button: "Cancel request", title: "Cancel this request?", keep: "Keep request", why: "request" },
+  leave: { button: "Cancel leave", title: "Cancel this leave?", keep: "Keep leave", why: "leave" },
+} as const;
+
+// Cancel with confirmation; the server enforces who may cancel what.
+//   own_request: a staff member cancelling their own pending request
+//                ("Cancel request", no note)
+//   leave:       an approver or admin cancelling someone's leave
+//                ("Cancel leave", note required)
 export function CancelApplicationButton({
   applicationId,
   summary,
-  noteRequired,
-  label = "Cancel request",
+  kind,
 }: {
   applicationId: string;
   // e.g. "Annual leave, 14 – 18 Oct 2026 (4 days)"
   summary: string;
-  noteRequired: boolean;
-  label?: string;
+  kind: keyof typeof TEXT;
 }) {
+  const text = TEXT[kind];
+  const noteRequired = kind === "leave";
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
@@ -71,9 +79,9 @@ export function CancelApplicationButton({
   return (
     <>
       <Button variant="secondary" onClick={() => setOpen(true)} className="h-11 px-5 text-sm">
-        {label}
+        {text.button}
       </Button>
-      <Dialog open={open} onClose={close} title="Cancel this request?">
+      <Dialog open={open} onClose={close} title={text.title}>
         <div className="space-y-5">
           <p className="text-[15px] text-plum-900">{summary}</p>
           <p className="text-[15px] text-muted">
@@ -94,17 +102,17 @@ export function CancelApplicationButton({
                 aria-describedby={noteError ? `cancel-note-${applicationId}-error` : `cancel-note-${applicationId}-hint`}
               />
               {!noteError && (
-                <FieldHint id={`cancel-note-${applicationId}-hint`}>Required. Say why the request is cancelled.</FieldHint>
+                <FieldHint id={`cancel-note-${applicationId}-hint`}>Required. Say why the {text.why} is cancelled.</FieldHint>
               )}
               <FieldError id={`cancel-note-${applicationId}-error`}>{noteError}</FieldError>
             </div>
           )}
           <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
             <Button variant="secondary" onClick={close} disabled={pending}>
-              Keep request
+              {text.keep}
             </Button>
             <Button onClick={confirm} loading={pending} loadingText="Cancelling…">
-              Cancel request
+              {text.button}
             </Button>
           </div>
         </div>

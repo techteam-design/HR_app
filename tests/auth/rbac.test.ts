@@ -16,7 +16,8 @@ import {
 
 // The full permission table. Any change to rbac.ts must be reflected here.
 const EXPECTED: Record<Role, Action[]> = {
-  employee: ["view_own_profile", "update_own_photo", "apply_leave"],
+  // Employees see the team calendar too (approved leave only, no leave types).
+  employee: ["view_own_profile", "update_own_photo", "apply_leave", "view_team_calendar"],
   manager: ["view_own_profile", "update_own_photo", "apply_leave", "approve_leave", "view_team_calendar"],
   // The admin takes no leave: everything except apply_leave.
   admin: ACTIONS.filter((action) => action !== "apply_leave"),
@@ -137,13 +138,21 @@ describe("navigationFor()", () => {
     expect(hrefs("admin")).toContain("/approvals");
   });
 
-  it("employee sees only their own pages", () => {
+  it("employee sees their own pages and the team calendar", () => {
     expect(hrefs("employee")).toEqual([
       "/dashboard",
       "/leave/apply",
       "/leave/history",
       "/profile",
+      "/team-calendar",
     ]);
+  });
+
+  it("every role sees the team calendar", () => {
+    for (const role of ROLES) {
+      expect(can(role, "view_team_calendar")).toBe(true);
+      expect(hrefs(role)).toContain("/team-calendar");
+    }
   });
 
   it("manager also sees approvals and team calendar, but no admin pages", () => {

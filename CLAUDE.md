@@ -41,7 +41,8 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 - Leave day counts can be 0.5, so use numeric/decimal columns, never floating point.
 
 ## Roles
-- employee: own profile, own balances and history, submit own leave
+- employee: own profile, own balances and history, submit own leave, and the team calendar (everyone's
+  APPROVED leave only, shown as "On leave" with no leave type; see "Team calendar")
 - manager (team heads use the manager role too): employee rights + approve/reject the requests
   assigned to them + team calendar
 - admin: the owner; exactly one in production. Full access, including employees, org structure,
@@ -430,7 +431,7 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Admin cancellation notes are stored (cancellation_note); on-behalf submissions record the admin
   (submitted_by).
 
-### Sprint 3A (built; manual testing pending)
+### Sprint 3A (complete, manual testing passed)
 - Schema: migration 0002 (drizzle/0002_approval_routes.sql) adds approval_settings (one row: the
   managers' leave approver), branch_approval_routes, approval_route_overrides, approval_reassignments
   (+ enum approval_reassignment_cause), adjustment_reason carry_forward_recalculation, CHECKs on
@@ -440,7 +441,7 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Pure rules: src/lib/approvals/ (route-resolution, route-config, decision, progress, reassignment),
   src/lib/leave-engine/ (final-approval, carry-forward-correction, cancellation rewritten),
   src/lib/calendar/month-grid.ts, src/lib/overview/activity.ts. rbac: admin loses apply_leave, new
-  admin-only decide_any_leave, hr_viewer gains view_team_calendar, NavItem badge.
+  admin-only decide_any_leave, view_team_calendar for every role, NavItem badge.
 - Services: approval-route.service.ts (resolver inputs, routes, reassignment, setup page),
   approval.service.ts (queue, decisions, nav count), leave-period.service.ts (period balance reads on
   a Reader, runLocked, carry-forward correction), team-calendar.service.ts, leave-overview.service.ts;
@@ -458,11 +459,22 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Dev data: npm run db:reset:dev (see "Dev data"); db:seed is insert-only (never overwrites policies).
 - Tests: tests/approvals, tests/calendar, tests/overview, tests/db/transaction, new engine and
   validation tests; cancellation and rbac tests updated for the new rules.
+- Manual testing passed: routes and setup, single- and two-level approvals, rejection, admin deciding
+  in place, managers' leave, final-approval balance check, cancellation rules, route changes and
+  reassignment, overview, team calendar for all roles with the employee restrictions.
+  npm run db:race-check PASSED.
 
 ### Sprint 3A decisions
-- Admin takes no leave; managers' leave goes to the "Managers' leave approver" (fallback: the only
-  active admin). Branch defaults cover employees and HR viewers; overrides win over everything.
-- Staff cancel pending only; approvers cancel approved leave; admin cancels both (note required).
+- Client decisions:
+  - The admin (owner) takes no leave.
+  - Approval routes are set per branch (branch defaults; per-employee overrides win over everything).
+    Branch defaults cover employees and HR viewers.
+  - Managers' leave goes to the admin (the "Managers' leave approver" setting; fallback: the only
+    active admin).
+  - Staff cancel pending requests only; approvers and the admin cancel approved leave (the admin also
+    cancels pending; note required).
+  - Every role sees the team calendar. Employees see approved leave only, shown as "On leave" with no
+    leave type; their branch filter defaults to their own branch.
 - Late approvals/cancellations of previous-year annual leave correct the next year's carry-forward with
   a system adjustment (option C).
 - "On leave today" counts approved leave only; the next 7 days also show pending (labelled). Staff
@@ -470,15 +482,35 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - The manager's team calendar = direct reports + everyone they approve (routes) + anyone whose request
   is snapshotted to them.
 
-### Open items carried to Sprint 3B
-- Resend email notifications (submit, approve, reject, level 2 handoff) and the pending-approval
-  reminder cron (/api/cron/reminders, still 501; needs a second cron trigger in custom-worker.ts and
-  wrangler.jsonc). The resend package is not installed yet, and the email templates are empty .tsx
-  files (React Email is not an approved package).
-- DNS move of hr.sbcwellness.com to Cloudflare.
-- CRON_SECRET must be set as a Worker secret on staging (and later production), or the daily
-  entitlement job fails.
-- Redeploy staging after this sprint (the dev database no longer has approval_workflows).
+### Team calendar (Sprint 3A change request)
+- Every role opens /team-calendar (view_team_calendar for all). What each role gets is decided in
+  team-calendar.service.ts (calendarScopeFor): admin and hr_viewer "everyone", managers "team" (direct
+  reports + everyone they approve + snapshotted requests), both with approved + pending and leave types;
+  employees "company": everyone's APPROVED leave only, department and branch filters, branch defaulting
+  to their own ("all" = every branch).
+- Employees never receive the leave type, status, request id, reason, remarks, cancellation notes or
+  balances: the SQL asks for approved only and every employee entry goes through publicEntries()
+  (src/lib/calendar/entries.ts), which builds the entry field by field. No detail dialog, no Cancel.
+- Display: codes AL / MC / UL in the balance card tints (annual lilac, MC blush, unpaid sage);
+  approved solid, pending outlined + "Pending"; half days "½ AM/PM"; employees see a neutral
+  "On leave". Month cells show photo + "Maria S." + chips, max 3 then "+N more" (opens the day).
+  Month | List toggle remembered in sessionStorage; under 640px it starts on List (month cells then
+  show avatars only; tap a day for its list). Legend per role.
+- Cancel labels: "Cancel request" only for staff cancelling their own pending request (no note);
+  approvers and the admin always see "Cancel leave" (note required), including the admin cancelling a
+  pending request.
+
+### Open items carried forward from Sprint 3A
+- Sprint 3B scope:
+  - Resend email notifications (submit, approve, reject, level 2 handoff) and the pending-approval
+    reminder cron (/api/cron/reminders, still 501; needs a second cron trigger in custom-worker.ts and
+    wrangler.jsonc). The resend package is not installed yet, and the email templates are empty .tsx
+    files (React Email is not an approved package).
+  - The notice card.
+  - DNS move of hr.sbcwellness.com to Cloudflare.
+- Mobile polish: to review later.
+- Carry-forward dev scenario before UAT (Sprint 4); see "Internal to-dos".
+- Redeploy staging after the Sprint 3A commit (the dev database no longer has approval_workflows).
 
 ### Dev data
 - WARNING: staging uses the SAME Neon dev branch as local dev. Resetting dev data also resets staging.
@@ -536,7 +568,7 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Sprint 2A (done): entitlement engine, balances, opening balances, leave policies page, daily
   entitlement job, dashboard balances.
 - Sprint 2B (done): per-date day selection, leave application, validation, cancellation, history.
-- Sprint 3A (built): approval routes and setup, approver queue, two-level flow, final-approval
+- Sprint 3A (done): approval routes and setup, approver queue, two-level flow, final-approval
   re-check, new cancellation rules, team calendar, admin/HR overview, the concurrency fix.
 - Sprint 3B (next): notifications via Resend (including reminders, /api/cron/reminders), the notice
   card, and the DNS move to Cloudflare.

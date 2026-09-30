@@ -60,6 +60,12 @@ export async function getLeaveOverview(today: IsoDate): Promise<LeaveOverview> {
   const submitter = alias(employees, "submitter");
   const actor = alias(employees, "actor");
   const canceller = alias(employees, "canceller");
+  // The request's type and dates, for the activity text.
+  const requestColumns = {
+    code: leaveTypes.code,
+    startDate: leaveApplications.startDate,
+    endDate: leaveApplications.endDate,
+  };
 
   const [dayRows, staffRows, branchRows, pendingRows, pendingCount, submissions, decisions, cancellations] =
     await db.batch([
@@ -122,9 +128,11 @@ export async function getLeaveOverview(today: IsoDate): Promise<LeaveOverview> {
           at: leaveApplications.submittedAt,
           employeeName: employees.fullName,
           actorName: submitter.fullName,
+          ...requestColumns,
         })
         .from(leaveApplications)
         .innerJoin(employees, eq(employees.id, leaveApplications.employeeId))
+        .innerJoin(leaveTypes, eq(leaveTypes.id, leaveApplications.leaveTypeId))
         .leftJoin(submitter, eq(submitter.id, leaveApplications.submittedBy))
         .orderBy(desc(leaveApplications.submittedAt))
         .limit(ACTIVITY_LIMIT),
@@ -137,10 +145,12 @@ export async function getLeaveOverview(today: IsoDate): Promise<LeaveOverview> {
           approvalMode: leaveApplications.approvalMode,
           employeeName: employees.fullName,
           actorName: actor.fullName,
+          ...requestColumns,
         })
         .from(approvalActions)
         .innerJoin(leaveApplications, eq(leaveApplications.id, approvalActions.applicationId))
         .innerJoin(employees, eq(employees.id, leaveApplications.employeeId))
+        .innerJoin(leaveTypes, eq(leaveTypes.id, leaveApplications.leaveTypeId))
         .innerJoin(actor, eq(actor.id, approvalActions.approverId))
         .orderBy(desc(approvalActions.actedAt))
         .limit(ACTIVITY_LIMIT),
@@ -150,9 +160,11 @@ export async function getLeaveOverview(today: IsoDate): Promise<LeaveOverview> {
           at: leaveApplications.cancelledAt,
           employeeName: employees.fullName,
           actorName: canceller.fullName,
+          ...requestColumns,
         })
         .from(leaveApplications)
         .innerJoin(employees, eq(employees.id, leaveApplications.employeeId))
+        .innerJoin(leaveTypes, eq(leaveTypes.id, leaveApplications.leaveTypeId))
         .leftJoin(canceller, eq(canceller.id, leaveApplications.cancelledBy))
         .where(isNotNull(leaveApplications.cancelledAt))
         .orderBy(desc(leaveApplications.cancelledAt))
@@ -205,6 +217,9 @@ export async function getLeaveOverview(today: IsoDate): Promise<LeaveOverview> {
       employeeName: row.employeeName,
       actorName: row.actorName,
       level: null,
+      code: row.code,
+      startDate: row.startDate,
+      endDate: row.endDate,
     })),
     ...decisions.map((row) => ({
       kind: row.action,
@@ -213,6 +228,9 @@ export async function getLeaveOverview(today: IsoDate): Promise<LeaveOverview> {
       employeeName: row.employeeName,
       actorName: row.actorName,
       level: row.approvalMode === "two_level" ? row.level : null,
+      code: row.code,
+      startDate: row.startDate,
+      endDate: row.endDate,
     })),
     ...cancellations.flatMap((row) =>
       row.at
@@ -224,6 +242,9 @@ export async function getLeaveOverview(today: IsoDate): Promise<LeaveOverview> {
               employeeName: row.employeeName,
               actorName: row.actorName,
               level: null,
+              code: row.code,
+              startDate: row.startDate,
+              endDate: row.endDate,
             },
           ]
         : [],

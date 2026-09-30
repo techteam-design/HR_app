@@ -1,6 +1,8 @@
 // Company leave overview helpers (admin and HR viewer dashboard). Pure.
 
+import type { LeaveTypeCode } from "@/lib/leave-engine/constants";
 import type { IsoDate } from "@/lib/leave-engine/iso-date";
+import { formatShortDateRange } from "@/lib/utils/dates";
 
 export type ActivityKind = "submitted" | "approved" | "rejected" | "cancelled";
 
@@ -14,6 +16,9 @@ export type ActivityEvent = {
   actorName: string | null;
   // Level of an approval decision on a two-level route.
   level: number | null;
+  code: LeaveTypeCode;
+  startDate: IsoDate;
+  endDate: IsoDate;
 };
 
 // Newest first, at most `limit` events.
@@ -21,25 +26,28 @@ export function recentActivity(events: readonly ActivityEvent[], limit: number):
   return [...events].sort((a, b) => b.at.getTime() - a.at.getTime()).slice(0, limit);
 }
 
-const VERBS: Record<ActivityKind, string> = {
-  submitted: "requested leave",
-  approved: "approved",
-  rejected: "rejected",
-  cancelled: "cancelled",
+// The leave type inside a sentence.
+export const ACTIVITY_TYPE_TEXT: Record<LeaveTypeCode, string> = {
+  annual: "annual leave",
+  mc: "MC",
+  unpaid: "unpaid leave",
 };
 
-// "Priya Nair requested leave", "Daniel Tan approved Priya Nair's request
-// (level 1)", "Vaidik Dubey cancelled Kelvin Ong's leave".
+// "Priya Nair requested MC · 30 Sep",
+// "Vaidik Dubey requested annual leave for Priya Nair · 19–20 Oct",
+// "Daniel Tan approved Maria Santos's annual leave · 19–20 Oct (level 1)",
+// "Vaidik Dubey cancelled Kelvin Ong's unpaid leave · 2 Nov".
 export function activityText(event: ActivityEvent): string {
+  const type = ACTIVITY_TYPE_TEXT[event.code];
+  const dates = formatShortDateRange(event.startDate, event.endDate);
   if (event.kind === "submitted") {
     return event.actorName
-      ? `${event.actorName} requested leave for ${event.employeeName}`
-      : `${event.employeeName} ${VERBS.submitted}`;
+      ? `${event.actorName} requested ${type} for ${event.employeeName} · ${dates}`
+      : `${event.employeeName} requested ${type} · ${dates}`;
   }
   const actor = event.actorName ?? "Someone";
-  const object = event.kind === "cancelled" ? `${event.employeeName}'s leave` : `${event.employeeName}'s request`;
   const level = event.level ? ` (level ${event.level})` : "";
-  return `${actor} ${VERBS[event.kind]} ${object}${level}`;
+  return `${actor} ${event.kind} ${event.employeeName}'s ${type} · ${dates}${level}`;
 }
 
 // Groups items by a key in first-seen order (e.g. by branch or by date).

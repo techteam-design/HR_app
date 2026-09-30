@@ -100,7 +100,9 @@ export const calendarFilterSchema = z.object({
     .optional()
     .catch(undefined),
   departmentId: optionalFilterId,
-  branchId: optionalFilterId,
+  // "all" = every branch. Needed because employees default to their own
+  // branch when no branch is chosen.
+  branchId: z.union([z.literal("all"), z.uuid()]).optional().catch(undefined),
 });
 
 export const QUEUE_VIEWS = ["mine", "all", "decided"] as const;

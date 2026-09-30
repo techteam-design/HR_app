@@ -82,3 +82,17 @@ export function formatDateRange(start: string, end: string): string {
     sy !== ey ? full : sm !== em ? full.replace(/ \d{4}$/, "") : full.replace(/ \S+ \d{4}$/, "");
   return `${startPart} – ${formatDisplayDate(end)}`;
 }
+
+// Short range without the year for recent dates: "30 Sep", "19–20 Oct",
+// "30 Sep – 2 Oct". Across a year end the years are kept:
+// "30 Dec 2026 – 2 Jan 2027".
+export function formatShortDateRange(start: string, end: string): string {
+  const s = parseDateColumn(start);
+  const e = parseDateColumn(end);
+  if (!s || !e) return start === end ? start : `${start} – ${end}`;
+  if (s.getUTCFullYear() !== e.getUTCFullYear()) return formatDateRange(start, end);
+  const day = (date: Date) => `${date.getUTCDate()} ${SHORT_MONTHS[date.getUTCMonth()]}`;
+  if (start === end) return day(s);
+  if (s.getUTCMonth() === e.getUTCMonth()) return `${s.getUTCDate()}–${day(e)}`;
+  return `${day(s)} – ${day(e)}`;
+}

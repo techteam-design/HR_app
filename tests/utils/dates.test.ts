@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { bruneiHour, formatDateRange, formatDisplayDate, formatLongDate, formatWeekdayDate, greetingFor } from "@/lib/utils/dates";
+import {
+  bruneiHour,
+  formatDateRange,
+  formatDisplayDate,
+  formatLongDate,
+  formatShortDateRange,
+  formatWeekdayDate,
+  greetingFor,
+} from "@/lib/utils/dates";
 
 // Brunei is UTC+8 with no daylight saving.
 const bnt = (isoUtc: string) => new Date(isoUtc);
@@ -49,5 +57,12 @@ describe("short date formats", () => {
 
   it("returns invalid values unchanged", () => {
     expect(formatDisplayDate("not-a-date")).toBe("not-a-date");
+  });
+
+  it("formatShortDateRange: no year unless the range crosses a year end", () => {
+    expect(formatShortDateRange("2026-09-30", "2026-09-30")).toBe("30 Sep");
+    expect(formatShortDateRange("2026-10-19", "2026-10-20")).toBe("19–20 Oct");
+    expect(formatShortDateRange("2026-09-30", "2026-10-02")).toBe("30 Sep – 2 Oct");
+    expect(formatShortDateRange("2026-12-30", "2027-01-02")).toBe("30 Dec 2026 – 2 Jan 2027");
   });
 });

@@ -74,6 +74,8 @@ describe("query filters", () => {
     });
     expect(setupFilterSchema.parse({ problems: "1" }).problems).toBe(true);
     expect(calendarFilterSchema.parse({ month: "2026-13" }).month).toBeUndefined();
+    expect(calendarFilterSchema.parse({ branchId: "all" }).branchId).toBe("all");
+    expect(calendarFilterSchema.parse({ branchId: "nope" }).branchId).toBeUndefined();
     expect(queueViewSchema.parse("bogus")).toBe("mine");
   });
 });
