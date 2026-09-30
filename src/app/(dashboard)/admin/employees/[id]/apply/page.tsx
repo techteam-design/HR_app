@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { can } from "@/lib/auth/rbac";
 import { todayIsoInBrunei } from "@/lib/utils/dates";
 import { requireEmployee } from "@/server/auth.service";
-import { getApplyContext } from "@/server/leave-application.service";
+import { ADMIN_TAKES_NO_LEAVE, getApplyContext } from "@/server/leave-application.service";
 
 // Admin: apply for leave on an employee's behalf (same form, plus backdating
 // and the notice override).
@@ -33,7 +33,9 @@ export default async function ApplyOnBehalfPage({ params }: { params: Promise<{ 
           </>
         }
       />
-      {context.employee.status === "inactive" ? (
+      {context.employee.role === "admin" ? (
+        <Alert tone="notice">{ADMIN_TAKES_NO_LEAVE}</Alert>
+      ) : context.employee.status === "inactive" ? (
         <Alert tone="notice">This employee is inactive. Reactivate them before applying for leave.</Alert>
       ) : (
         <LeaveApplicationForm

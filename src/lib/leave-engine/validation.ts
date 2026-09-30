@@ -2,7 +2,7 @@
 // feedback) loads the context; this returns every failing rule with a
 // message the employee can act on. The server always re-validates.
 
-import { formatDisplayDate } from "../utils/dates";
+import { formatDisplayDate } from "@/lib/utils/dates";
 
 import { formatDays } from "./balance";
 import { LEAVE_TYPE_NAMES, MC_BACKDATE_DAYS, type Classification, type LeaveTypeCode } from "./constants";

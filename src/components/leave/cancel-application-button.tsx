@@ -8,17 +8,19 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { FieldError, FieldHint, Input, Label } from "@/components/ui/input";
 
-// Cancel with confirmation. An admin cancelling a request must give a note;
-// the server enforces who may cancel what.
+// Cancel with confirmation. An approver or admin cancelling someone else's
+// request must give a note; the server enforces who may cancel what.
 export function CancelApplicationButton({
   applicationId,
   summary,
-  asAdmin,
+  noteRequired,
+  label = "Cancel request",
 }: {
   applicationId: string;
   // e.g. "Annual leave, 14 – 18 Oct 2026 (4 days)"
   summary: string;
-  asAdmin: boolean;
+  noteRequired: boolean;
+  label?: string;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -36,7 +38,7 @@ export function CancelApplicationButton({
 
   async function confirm() {
     setError(null);
-    if (asAdmin && note.trim().length < 3) {
+    if (noteRequired && note.trim().length < 3) {
       setNoteError("A note is required (at least 3 characters).");
       return;
     }
@@ -46,7 +48,7 @@ export function CancelApplicationButton({
       const response = await fetch(`/api/leave/applications/${applicationId}/cancel`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ note: asAdmin ? note : null }),
+        body: JSON.stringify({ note: noteRequired ? note : null }),
       });
       const body = (await response.json().catch(() => null)) as {
         error?: string;
@@ -69,7 +71,7 @@ export function CancelApplicationButton({
   return (
     <>
       <Button variant="secondary" onClick={() => setOpen(true)} className="h-11 px-5 text-sm">
-        Cancel request
+        {label}
       </Button>
       <Dialog open={open} onClose={close} title="Cancel this request?">
         <div className="space-y-5">
@@ -79,7 +81,7 @@ export function CancelApplicationButton({
             submit a new request.
           </p>
           {error && <Alert>{error}</Alert>}
-          {asAdmin && (
+          {noteRequired && (
             <div className="space-y-2">
               <Label htmlFor={`cancel-note-${applicationId}`}>Note</Label>
               <Input

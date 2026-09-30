@@ -10,6 +10,8 @@ export const ACTIONS = [
   "update_own_photo",
   "apply_leave",
   "approve_leave",
+  // Decide any pending request at its current level, not only your own queue.
+  "decide_any_leave",
   "view_team_calendar",
   "manage_employees",
   "manage_org",
@@ -30,6 +32,7 @@ export const ACTION_KIND: Record<Action, "self" | "read" | "write"> = {
   update_own_photo: "self",
   apply_leave: "self",
   approve_leave: "write",
+  decide_any_leave: "write",
   view_team_calendar: "read",
   manage_employees: "write",
   manage_org: "write",
@@ -47,9 +50,12 @@ const EMPLOYEE_ACTIONS: readonly Action[] = ["view_own_profile", "update_own_pho
 const PERMISSIONS: Record<Role, ReadonlySet<Action>> = {
   employee: new Set(EMPLOYEE_ACTIONS),
   manager: new Set([...EMPLOYEE_ACTIONS, "approve_leave", "view_team_calendar"]),
-  admin: new Set(ACTIONS),
-  // Read-only across the company. May manage only their own leave.
-  hr_viewer: new Set([...EMPLOYEE_ACTIONS, "view_all_records", "view_reports"]),
+  // The admin (the owner) takes no leave: everything except applying for
+  // their own leave. They still apply on staff's behalf (manage_employees).
+  admin: new Set(ACTIONS.filter((action) => action !== "apply_leave")),
+  // Read-only across the company (including the team calendar and the
+  // approval setup). May manage only their own leave.
+  hr_viewer: new Set([...EMPLOYEE_ACTIONS, "view_all_records", "view_team_calendar", "view_reports"]),
 };
 
 export function can(role: Role, action: Action): boolean {
@@ -84,6 +90,8 @@ export type NavItem = {
   section: NavSection;
   // null: every signed-in employee sees it.
   action: Action | null;
+  // Count shown next to the label (e.g. pending approvals); hidden at 0.
+  badge?: number;
 };
 
 export const NAV_ITEMS: readonly NavItem[] = [
@@ -97,7 +105,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { href: "/admin/org-chart", label: "Org chart", section: "People", action: "view_all_records" },
   { href: "/admin/departments", label: "Departments & branches", section: "Admin", action: "manage_org" },
   { href: "/admin/leave-policies", label: "Leave policies", section: "Admin", action: "manage_policies" },
-  { href: "/admin/approval-config", label: "Approval setup", section: "Admin", action: "manage_approval_config" },
+  // Read-only for HR viewers; editing needs manage_approval_config.
+  { href: "/admin/approval-config", label: "Approval setup", section: "Admin", action: "view_all_records" },
   { href: "/reports", label: "Reports", section: "Reports", action: "view_reports" },
   { href: "/reports/calendar", label: "Leave calendar", section: "Reports", action: "view_reports" },
 ];

@@ -17,6 +17,7 @@ import {
   findEntitlementEmployee,
   needsEntitlements,
 } from "./entitlement.service";
+import { displayedForfeited, periodUsage, rowAdjustments, runLocked } from "./leave-period.service";
 import { loadLeavePolicies, type LeavePolicy } from "./leave-policy.service";
 import { fail, UUID, type ServiceResult } from "./service-result";
 
@@ -83,7 +84,7 @@ export async function getEmployeeBalances(
   const rows = await databaseEntitlementStore.findEntitlements([employee.id], starts);
   const usage = await databaseEntitlementStore.usageFor(rows.map((row) => row.id));
 
-  const types = periods.map(({ policy, period }): LeaveTypeBalance => {
+  const types = await Promise.all(periods.map(async ({ policy, period }): Promise<LeaveTypeBalance> => {
     const row = period
       ? rows.find((r) => r.leaveTypeId === policy.leaveTypeId && r.periodStart === period.start)
       : undefined;
@@ -107,12 +108,12 @@ export async function getEmployeeBalances(
               pendingDays: rowUsage.pending,
             })
           : null,
-      forfeitedDays: row?.forfeitedDays ?? 0,
+      forfeitedDays: row ? await displayedForfeited(getDb(), employee, policy, row) : 0,
       carryForwardExpiresOn: row?.carryForwardExpiresOn ?? null,
       eligibleFrom: from,
       eligible: isEligible(from, onDate),
     };
-  });
+  }));
 
   const annualPolicy = policies.find((p) => p.code === "annual");
   const annualPeriod = periods.find(({ policy }) => policy.code === "annual")?.period ?? null;
@@ -167,8 +168,10 @@ export async function listAdjustments(employeeId: string, limit = 50) {
 
 export type AdjustmentHistoryItem = Awaited<ReturnType<typeof listAdjustments>>[number];
 
-// Adds an adjustment to the employee's CURRENT period for the leave type.
-// Refused when it would take the available balance below 0.
+// Adds a manual adjustment (opening balance or correction) to the
+// employee's CURRENT period for the leave type. Refused when it would take
+// the available balance below 0. (System carry-forward recalculations are
+// added by leave-period.service.ts and are exempt from that rule.)
 export async function addAdjustment(
   actor: { id: string },
   employeeId: string,
@@ -189,26 +192,39 @@ export async function addAdjustment(
     return fail(409, "No leave period exists for this leave type yet. Please try again.");
   }
 
-  const available = type.balance.available + input.days;
-  if (available < 0) {
-    return fail(400, "Please check the highlighted fields.", {
+  const { entitlementId, periodStart, periodEnd, leaveTypeId } = type;
+  const { entitled, carriedForward } = type.balance;
+  const negative = (available: number, current: number) =>
+    fail(400, "Please check the highlighted fields.", {
       fieldErrors: {
-        days: `This would leave ${formatDays(available)} days available. The available balance cannot go below 0 (currently ${formatDays(type.balance.available)}).`,
+        days: `This would leave ${formatDays(available)} days available. The available balance cannot go below 0 (currently ${formatDays(current)}).`,
       },
     });
-  }
+  if (type.balance.available + input.days < 0) return negative(type.balance.available + input.days, type.balance.available);
 
-  const [row] = await getDb()
-    .insert(leaveAdjustments)
-    .values({
-      employeeId: balances.employeeId,
-      leaveTypeId: type.leaveTypeId,
-      entitlementId: type.entitlementId,
-      days: String(input.days),
-      reason: input.reason,
-      note: input.note,
-      createdBy: actor.id,
-    })
-    .returning({ id: leaveAdjustments.id });
-  return { ok: true, id: row.id, available };
+  // Balance-affecting write: re-check inside the employee's locked
+  // transaction (an approval may have used days since the check above).
+  return runLocked(balances.employeeId, async (tx) => {
+    const [adjustments, usage] = [
+      await rowAdjustments(tx, entitlementId),
+      await periodUsage(tx, balances.employeeId, leaveTypeId, { start: periodStart!, end: periodEnd! }),
+    ];
+    const current = entitled + carriedForward + adjustments.total - usage.approved;
+    const available = current + input.days;
+    if (available < 0) return negative(available, current);
+
+    const [row] = await tx
+      .insert(leaveAdjustments)
+      .values({
+        employeeId: balances.employeeId,
+        leaveTypeId,
+        entitlementId,
+        days: String(input.days),
+        reason: input.reason,
+        note: input.note,
+        createdBy: actor.id,
+      })
+      .returning({ id: leaveAdjustments.id });
+    return { ok: true, id: row.id, available };
+  });
 }

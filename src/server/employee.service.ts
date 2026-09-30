@@ -5,7 +5,6 @@ import { alias } from "drizzle-orm/pg-core";
 import { getDb } from "@/db";
 import {
   account,
-  approvalWorkflows,
   branches,
   departments,
   employees,
@@ -22,6 +21,14 @@ import {
   type EmployeeListQuery,
 } from "@/validations/employee";
 
+import {
+  approverBlockers,
+  loadRouteContext,
+  pendingWaitingFor,
+  reassignmentStatements,
+  withChange,
+  type RouteContext,
+} from "./approval-route.service";
 import { ensureEntitlementsQuietly, JOIN_DATE_BLOCKED, joinDateChangeStatements } from "./entitlement.service";
 import {
   buildCredentialLogin,
@@ -475,6 +482,19 @@ export async function updateEmployee(
   });
   if (adminError) return fail(409, adminError, { fieldErrors: { role: adminError } });
 
+  // Approvers: a role change that would stop them approving is refused
+  // while they are on any route (same pattern as deactivation).
+  const roleChanged = input.role !== current.role;
+  const branchChanged = input.branchId !== current.branchId;
+  const routeContext = roleChanged || branchChanged ? await loadRouteContext() : null;
+  if (routeContext && roleChanged) {
+    const details = await roleChangeBlockers(routeContext, current, input.role);
+    if (details.length > 0) {
+      const error = `Reassign these before changing ${current.fullName}'s role:`;
+      return fail(409, error, { details, fieldErrors: { role: "This person is still an approver. See the message above." } });
+    }
+  }
+
   const emailChanged = input.email !== current.email;
   const fieldErrors = await validateProfile(input, {
     employeeId: id,
@@ -513,6 +533,22 @@ export async function updateEmployee(
     statements.push(...change.statements);
   }
 
+  // A new branch or role can change the employee's approval route (and a
+  // role change to or from admin the managers' approver): their pending
+  // requests move to the new route in the same transaction.
+  if (routeContext) {
+    const after = withChange(routeContext, {
+      kind: "employee",
+      id,
+      role: input.role,
+      status: nextStatus,
+      branchId: input.branchId,
+    });
+    const adminsChanged = routeContext.managersApprover?.id !== after.managersApprover?.id;
+    const affected = [id, ...(adminsChanged ? managerIds(after).filter((m) => m !== id) : [])];
+    statements.push(...(await reassignmentStatements(after, affected, "employee_change", actor.id)));
+  }
+
   try {
     await runBatch(statements);
   } catch (error) {
@@ -546,25 +582,11 @@ async function loadTarget(id: string) {
 
 // Who would be left without a manager or approver if this employee left.
 async function deactivationBlockers(id: string): Promise<string[]> {
-  const db = getDb();
-  const workflowOwner = alias(employees, "workflow_owner");
-  const [reports, approverFor] = await db.batch([
-    db
-      .select({ fullName: employees.fullName, employeeCode: employees.employeeCode })
-      .from(employees)
-      .where(and(eq(employees.reportingManagerId, id), ne(employees.status, "inactive")))
-      .orderBy(asc(employees.fullName)),
-    db
-      .select({
-        fullName: workflowOwner.fullName,
-        employeeCode: workflowOwner.employeeCode,
-        level1: approvalWorkflows.level1ApproverId,
-      })
-      .from(approvalWorkflows)
-      .innerJoin(workflowOwner, eq(workflowOwner.id, approvalWorkflows.employeeId))
-      .where(or(eq(approvalWorkflows.level1ApproverId, id), eq(approvalWorkflows.level2ApproverId, id)))
-      .orderBy(asc(workflowOwner.fullName)),
-  ]);
+  const reports = await getDb()
+    .select({ fullName: employees.fullName, employeeCode: employees.employeeCode })
+    .from(employees)
+    .where(and(eq(employees.reportingManagerId, id), ne(employees.status, "inactive")))
+    .orderBy(asc(employees.fullName));
 
   const details: string[] = [];
   if (reports.length > 0) {
@@ -572,14 +594,39 @@ async function deactivationBlockers(id: string): Promise<string[]> {
       `Reporting manager of: ${reports.map((r) => `${r.fullName} (${r.employeeCode})`).join(", ")}`,
     );
   }
-  if (approverFor.length > 0) {
-    details.push(
-      `Leave approver for: ${approverFor
-        .map((r) => `${r.fullName} (${r.employeeCode}, level ${r.level1 === id ? 1 : 2})`)
-        .join(", ")}`,
-    );
+  details.push(...(await approverDetails(await loadRouteContext(), id)));
+  return details;
+}
+
+// Every route that names this person as an approver (branch defaults,
+// overrides, the managers' leave approver, including as the only active
+// admin), plus requests still waiting for their decision.
+async function approverDetails(context: RouteContext, id: string): Promise<string[]> {
+  const details = approverBlockers(context, id);
+  const waiting = await pendingWaitingFor(id);
+  if (waiting > 0) {
+    details.push(`${waiting} pending leave ${waiting === 1 ? "request is" : "requests are"} waiting for their decision`);
   }
   return details;
+}
+
+// Only managers and admins can approve. An admin's role cannot change while
+// they approve anyone; a manager cannot become an employee or HR viewer
+// while they are on a route.
+async function roleChangeBlockers(
+  context: RouteContext,
+  current: { id: string; role: string },
+  nextRole: string,
+): Promise<string[]> {
+  const stopsApproving = nextRole === "employee" || nextRole === "hr_viewer";
+  const adminChanges = current.role === "admin" && nextRole !== "admin";
+  const managerStops = current.role === "manager" && stopsApproving;
+  if (!adminChanges && !managerStops) return [];
+  return approverDetails(context, current.id);
+}
+
+function managerIds(context: RouteContext): string[] {
+  return context.employees.filter((e) => e.role === "manager" && e.status !== "inactive").map((e) => e.id);
 }
 
 // Sets the employee inactive and signs them out everywhere, in one transaction.

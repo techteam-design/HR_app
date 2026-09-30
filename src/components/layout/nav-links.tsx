@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { NAV_SECTIONS, type NavItem } from "@/lib/auth/rbac";
 import { cn } from "@/lib/utils/cn";
 
-import { iconFor, isActivePath } from "./nav-icons";
+import { iconFor, isActivePath, NavBadge } from "./nav-icons";
 
 // Sidebar and "More" sheet navigation: pill links grouped under eyebrow headings.
 export function NavLinks({
@@ -46,6 +46,7 @@ export function NavLinks({
                     >
                       <Icon width={20} height={20} className={active ? "text-plum-700" : undefined} />
                       {item.label}
+                      {!!item.badge && <NavBadge count={item.badge} className="ml-auto" />}
                     </Link>
                   </li>
                 );

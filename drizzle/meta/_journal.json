@@ -15,6 +15,20 @@
       "when": 1790332840320,
       "tag": "0001_steep_wasp",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790680137063,
+      "tag": "0002_approval_routes",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790680162485,
+      "tag": "0003_drop_approval_workflows",
+      "breakpoints": true
     }
   ]
 }

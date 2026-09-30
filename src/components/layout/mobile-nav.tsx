@@ -11,7 +11,7 @@ import { Sheet } from "@/components/ui/sheet";
 import type { NavItem } from "@/lib/auth/rbac";
 import { cn } from "@/lib/utils/cn";
 
-import { iconFor, isActivePath } from "./nav-icons";
+import { iconFor, isActivePath, NavBadge } from "./nav-icons";
 import { NavLinks } from "./nav-links";
 import { UserPanel } from "./user-panel";
 
@@ -68,15 +68,16 @@ export function MobileNav({
       <Link
         key={item.href}
         href={item.href}
-        aria-label={item.label}
+        aria-label={item.badge ? `${item.label} (${item.badge} pending)` : item.label}
         aria-current={active ? "page" : undefined}
         className={cn(
-          "flex size-12 items-center justify-center rounded-full transition-colors duration-150",
+          "relative flex size-12 items-center justify-center rounded-full transition-colors duration-150",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-plum-700",
           active ? "bg-lilac-50 text-plum-900" : "text-muted hover:text-plum-900",
         )}
       >
         <Icon />
+        {!!item.badge && <NavBadge count={item.badge} className="absolute -top-0.5 -right-0.5" />}
       </Link>
     );
   });

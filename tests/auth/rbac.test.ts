@@ -18,8 +18,16 @@ import {
 const EXPECTED: Record<Role, Action[]> = {
   employee: ["view_own_profile", "update_own_photo", "apply_leave"],
   manager: ["view_own_profile", "update_own_photo", "apply_leave", "approve_leave", "view_team_calendar"],
-  admin: [...ACTIONS],
-  hr_viewer: ["view_own_profile", "update_own_photo", "apply_leave", "view_all_records", "view_reports"],
+  // The admin takes no leave: everything except apply_leave.
+  admin: ACTIONS.filter((action) => action !== "apply_leave"),
+  hr_viewer: [
+    "view_own_profile",
+    "update_own_photo",
+    "apply_leave",
+    "view_all_records",
+    "view_team_calendar",
+    "view_reports",
+  ],
 };
 
 const WRITE_ACTIONS = ACTIONS.filter((action) => ACTION_KIND[action] === "write");
@@ -122,8 +130,11 @@ describe("navigationFor()", () => {
     }
   });
 
-  it("admin sees every item", () => {
-    expect(hrefs("admin")).toEqual(NAV_ITEMS.map((item) => item.href));
+  it("admin sees every item except their own leave pages (admins take no leave)", () => {
+    expect(hrefs("admin")).toEqual(
+      NAV_ITEMS.map((item) => item.href).filter((href) => href !== "/leave/apply" && href !== "/leave/history"),
+    );
+    expect(hrefs("admin")).toContain("/approvals");
   });
 
   it("employee sees only their own pages", () => {
@@ -146,21 +157,25 @@ describe("navigationFor()", () => {
     ]);
   });
 
-  it("hr_viewer sees the read-only employee list, org chart and reports, but no other admin, approval or team pages", () => {
+  it("hr_viewer sees the read-only employee list, org chart, team calendar, approval setup and reports, but no approvals or other admin pages", () => {
     expect(hrefs("hr_viewer")).toEqual([
       "/dashboard",
       "/leave/apply",
       "/leave/history",
       "/profile",
+      "/team-calendar",
       "/admin/employees",
       "/admin/org-chart",
+      "/admin/approval-config",
       "/reports",
       "/reports/calendar",
     ]);
     expect(hrefs("hr_viewer").filter((href) => href.startsWith("/admin"))).toEqual([
       "/admin/employees",
       "/admin/org-chart",
+      "/admin/approval-config",
     ]);
+    expect(hrefs("hr_viewer")).not.toContain("/approvals");
   });
 
   it("groups Employees and Org chart under People, and Departments, Leave policies and Approval setup under Admin", () => {
@@ -172,12 +187,19 @@ describe("navigationFor()", () => {
     expect(sectionOf("/admin/approval-config")).toBe("Admin");
   });
 
-  it("People is visible to admin and hr_viewer only, Admin to admin only", () => {
+  it("People is visible to admin and hr_viewer only; Admin to admin, and to hr_viewer for the read-only approval setup only", () => {
     const sections = (role: Role) => new Set(navigationFor(role).map((item) => item.section));
     for (const role of ROLES) {
       expect(sections(role).has("People")).toBe(role === "admin" || role === "hr_viewer");
-      expect(sections(role).has("Admin")).toBe(role === "admin");
+      expect(sections(role).has("Admin")).toBe(role === "admin" || role === "hr_viewer");
     }
+    const hrAdminItems = navigationFor("hr_viewer").filter((item) => item.section === "Admin");
+    expect(hrAdminItems.map((item) => item.href)).toEqual(["/admin/approval-config"]);
+    expect(can("hr_viewer", "manage_approval_config")).toBe(false);
+  });
+
+  it("deciding any request is admin only", () => {
+    for (const role of ROLES) expect(can(role, "decide_any_leave")).toBe(role === "admin");
   });
 
   it("every nav item uses a known section, listed in display order", () => {

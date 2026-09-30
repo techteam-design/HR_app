@@ -1,11 +1,14 @@
 // Config seed: leave types and their policies. Safe for production.
-// Idempotent: upserts by leave_types.code and leave_policies.leave_type_id.
-// This script is the source of truth for policy defaults: existing rows are
-// updated to the values below.
+// Insert-only and idempotent: a leave type or policy that already exists is
+// NEVER changed, because the client edits policies on the Leave policies
+// page. The values below are only the defaults for rows that are missing.
+// (npm run db:reset:dev deletes the dev rows first, so dev gets these
+// defaults again.)
 //
 // Run: npm run db:seed
 
 import { config } from "dotenv";
+import { eq } from "drizzle-orm";
 
 import { getDb } from "./index";
 import { leavePolicies, leaveTypes, type EntitlementTable } from "./schema";
@@ -34,8 +37,7 @@ const ANNUAL_ENTITLEMENT_TABLE: EntitlementTable = [
   { serviceYear: 8, days: 14 },
 ];
 
-// Every policy field is listed explicitly (including nulls) so an update
-// resets any drift back to these defaults.
+// Every policy field is listed explicitly (including nulls).
 const SEED: { type: LeaveTypeSeed; policy: PolicySeed }[] = [
   {
     type: {
@@ -74,8 +76,8 @@ const SEED: { type: LeaveTypeSeed; policy: PolicySeed }[] = [
       carryForwardCap: null,
       carryForwardExpiryMonths: null,
       prorateOnJoin: true,
-      // Still pending client confirmation (up, down or nearest).
-      prorateRounding: null,
+      // Client decision: pro-rated MC rounds UP to the nearest half day.
+      prorateRounding: "up",
     },
   },
   {
@@ -106,51 +108,24 @@ async function main() {
   const db = getDb();
   const summary = createSummary(SCRIPT);
 
-  const existingTypeCodes = new Set(
-    (await db.select({ code: leaveTypes.code }).from(leaveTypes)).map((r) => r.code),
-  );
-  const existingPolicyTypeIds = new Set(
-    (await db.select({ leaveTypeId: leavePolicies.leaveTypeId }).from(leavePolicies)).map(
-      (r) => r.leaveTypeId,
-    ),
-  );
-
   for (const { type, policy } of SEED) {
-    const [leaveType] = await db
+    const [insertedType] = await db
       .insert(leaveTypes)
       .values(type)
-      .onConflictDoUpdate({
-        target: leaveTypes.code,
-        set: {
-          name: type.name,
-          isPaid: type.isPaid,
-          periodBasis: type.periodBasis,
-          updatedAt: new Date(),
-        },
-      })
+      .onConflictDoNothing({ target: leaveTypes.code })
       .returning({ id: leaveTypes.id });
+    const [leaveType] = insertedType
+      ? [insertedType]
+      : await db.select({ id: leaveTypes.id }).from(leaveTypes).where(eq(leaveTypes.code, type.code));
+    if (!leaveType) throw new Error(`Leave type "${type.code}" could not be created or found.`);
+    (insertedType ? summary.created : summary.existing)(`leave_types: ${type.code}`);
 
-    if (!leaveType) throw new Error(`Upsert of leave type "${type.code}" returned no row.`);
-
-    if (existingTypeCodes.has(type.code)) {
-      summary.updated(`leave_types: ${type.code} (reset to seed values)`);
-    } else {
-      summary.created(`leave_types: ${type.code}`);
-    }
-
-    await db
+    const [insertedPolicy] = await db
       .insert(leavePolicies)
       .values({ leaveTypeId: leaveType.id, ...policy })
-      .onConflictDoUpdate({
-        target: leavePolicies.leaveTypeId,
-        set: { ...policy, updatedBy: null, updatedAt: new Date() },
-      });
-
-    if (existingPolicyTypeIds.has(leaveType.id)) {
-      summary.updated(`leave_policies: ${type.code} (reset to seed values)`);
-    } else {
-      summary.created(`leave_policies: ${type.code}`);
-    }
+      .onConflictDoNothing({ target: leavePolicies.leaveTypeId })
+      .returning({ id: leavePolicies.id });
+    (insertedPolicy ? summary.created : summary.existing)(`leave_policies: ${type.code}`);
   }
 
   summary.print();

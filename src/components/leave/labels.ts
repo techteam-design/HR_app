@@ -16,6 +16,8 @@ export const LEAVE_TINTS: Record<LeaveTypeCode, ArchTint> = {
 export const ADJUSTMENT_REASON_LABELS = {
   opening_balance: "Opening balance",
   correction: "Correction",
+  // System adjustment; admins cannot choose it.
+  carry_forward_recalculation: "Carry-forward recalculated",
 } as const;
 
 // "1 day", "3.5 days".

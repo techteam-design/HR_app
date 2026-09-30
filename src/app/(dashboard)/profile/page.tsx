@@ -27,12 +27,14 @@ export default async function ProfilePage() {
   const viewer = await requireEmployee({ action: "view_own_profile" });
 
   const showTeam = viewer.role === "manager" || viewer.role === "admin";
+  // Admins take no leave: no balances or upcoming leave on their profile.
+  const takesLeave = can(viewer.role, "apply_leave");
   const today = todayIsoInBrunei();
   const [employee, reports, balances, upcoming] = await Promise.all([
     getEmployeeDetail(viewer.id),
     showTeam ? listDirectReports(viewer.id) : Promise.resolve([]),
-    getEmployeeBalances(viewer.id, today),
-    listUpcoming(viewer.id, today),
+    takesLeave ? getEmployeeBalances(viewer.id, today) : Promise.resolve(null),
+    takesLeave ? listUpcoming(viewer.id, today) : Promise.resolve([]),
   ]);
   if (!employee) notFound();
 

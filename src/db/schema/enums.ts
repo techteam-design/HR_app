@@ -54,6 +54,9 @@ export const leaveApplicationStatusEnum = pgEnum("leave_application_status", [
 export const adjustmentReasonEnum = pgEnum("adjustment_reason", [
   "opening_balance",
   "correction",
+  // System adjustment: carry-forward recalculated after a late approval or
+  // cancellation of leave in the previous annual period.
+  "carry_forward_recalculation",
 ]);
 
 export const approvalModeEnum = pgEnum("approval_mode", ["single", "two_level"]);
@@ -61,4 +64,13 @@ export const approvalModeEnum = pgEnum("approval_mode", ["single", "two_level"])
 export const approvalActionEnum = pgEnum("approval_action", [
   "approved",
   "rejected",
+]);
+
+// Why a pending application moved to a different approver.
+export const approvalReassignmentCauseEnum = pgEnum("approval_reassignment_cause", [
+  "branch_default",
+  "override",
+  "override_reset",
+  "employee_change",
+  "manager_approver",
 ]);

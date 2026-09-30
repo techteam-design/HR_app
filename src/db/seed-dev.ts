@@ -1,40 +1,51 @@
-// Dummy data for the DEV Neon branch only. NEVER run against production.
-// Refuses to run unless ALLOW_DEV_SEED is exactly "true".
+// Small, clean dummy dataset for the DEV Neon branch only. NEVER run against
+// production. Refuses to run unless ALLOW_DEV_SEED is exactly "true".
+// Normally run by `npm run db:reset:dev` (after db:seed and db:seed:admin),
+// which starts from an empty database.
+//
+// Team: the seed-admin login is the ONLY admin (Branch A, Management), plus
+// one HR viewer, one manager and five employees. Join dates are relative to
+// today in Brunei, so the scenarios stay true whenever the reset runs.
+// Routes: Branch A single level (Daniel), Branch B two-level (Daniel, then
+// the admin), managers' leave approver = the admin, no overrides.
+// No leave applications are seeded.
+//
 // Idempotent: rows are matched by unique keys (branch/department name,
-// employee_code, approval_workflows.employee_id, user email); existing rows
-// are left unchanged.
+// employee_code, branch_id, user email, the single approval_settings row);
+// existing rows are left unchanged. Siti's opening balance is added once.
 //
 // Required env: ALLOW_DEV_SEED=true, SEED_DEV_PASSWORD (12+ chars, shared by
-// all dev logins).
-// Does NOT create leave_entitlements, leave_applications, approval_actions or
-// leave_adjustments (the leave engine creates entitlements in Sprint 2).
+// all dev logins), SEED_ADMIN_EMAIL (the admin created by db:seed:admin).
 //
 // Run: npm run db:seed:dev
 
-import { TZDate } from "@date-fns/tz";
 import { config } from "dotenv";
-import {
-  addDays,
-  differenceInCalendarDays,
-  startOfYear,
-  subDays,
-  subMonths,
-  subYears,
-} from "date-fns";
-import { eq } from "drizzle-orm";
+import { subDays, subMonths, subYears } from "date-fns";
+import { and, eq, ne } from "drizzle-orm";
+
+import { addAdjustment } from "../server/leave-balance.service";
 
 import { getDb } from "./index";
-import { account, approvalWorkflows, employees, user } from "./schema";
+import {
+  account,
+  approvalSettings,
+  branchApprovalRoutes,
+  branches,
+  employees,
+  leaveAdjustments,
+  user,
+} from "./schema";
 import {
   buildCredentialLogin,
   createSummary,
   ensureBranch,
   ensureDepartment,
   findUserIdByEmail,
+  normalizeEmail,
   printTarget,
+  requireEnv,
   requirePassword,
   runSeed,
-  BUSINESS_TIME_ZONE,
   toDateColumn,
   todayInBusinessZone,
 } from "./seed-helpers";
@@ -45,12 +56,14 @@ config({ path: ".env.local", quiet: true });
 const SCRIPT = "seed-dev";
 const EMAIL_DOMAIN = "example.test";
 
-const BRANCHES = ["Branch A", "Branch B", "Branch C"] as const;
-const DEPARTMENTS = ["Management", "Beauty Therapy", "Front Desk", "Operations"] as const;
+const BRANCHES = ["Branch A", "Branch B"] as const;
+// "Management" is also the department db:seed:admin creates for the admin.
+const DEPARTMENTS = ["Management", "Beauty Therapy"] as const;
+// Placeholder branch created by db:seed:admin; removed once the admin moves.
+const ADMIN_PLACEHOLDER_BRANCH = "Main Branch";
 
-type Approval =
-  | { mode: "single"; level1: string }
-  | { mode: "two_level"; level1: string; level2: string };
+type Branch = (typeof BRANCHES)[number];
+type Department = (typeof DEPARTMENTS)[number];
 
 type DevEmployee = {
   key: string;
@@ -60,273 +73,137 @@ type DevEmployee = {
   dateOfBirth: string;
   joinDate: string;
   designation: string;
-  branch: (typeof BRANCHES)[number];
-  department: (typeof DEPARTMENTS)[number];
+  branch: Branch;
+  department: Department;
   classification: "local" | "foreign";
-  role: "employee" | "manager" | "admin" | "hr_viewer";
-  status: "active" | "inactive" | "probation";
-  // Key of the reporting manager; must appear earlier in the list.
-  managerKey: string | null;
-  approval: Approval;
-  login: boolean;
+  role: "employee" | "manager" | "hr_viewer";
+  // "admin" is the seed-admin login; other keys must appear earlier.
+  managerKey: string;
   scenario: string;
 };
 
 function buildEmployees(): DevEmployee[] {
   const today = todayInBusinessZone();
   const d = toDateColumn;
-
-  // Mid-year joiner for MC pro-rating: 1 July this year, or (if 1 July is
-  // still in the future) halfway between 1 January and today.
-  const julyFirst = new TZDate(today.getFullYear(), 6, 1, BUSINESS_TIME_ZONE);
-  const midYearJoin =
-    today >= julyFirst
-      ? d(julyFirst)
-      : d(
-          addDays(
-            startOfYear(today),
-            Math.floor(differenceInCalendarDays(today, startOfYear(today)) / 2),
-          ),
-        );
+  // A few weeks past the anniversary, so nobody is on a leave-year boundary.
+  const yearsAgo = (years: number, extraDays: number) => d(subDays(subYears(today, years), extraDays));
 
   return [
     {
-      key: "admin",
-      code: "DEV-001",
-      fullName: "Aisha Rahman",
-      gender: "female",
-      dateOfBirth: "1980-04-12",
-      joinDate: d(subYears(today, 9)),
-      designation: "General Manager",
-      branch: "Branch A",
-      department: "Management",
-      classification: "local",
-      role: "admin",
-      status: "active",
-      managerKey: null,
-      // Most senior person: approved by the longest-serving branch manager.
-      approval: { mode: "single", level1: "managerA" },
-      login: true,
-      scenario: "Admin, 9 years service (14 days annual)",
-    },
-    {
-      key: "hrViewer",
+      key: "grace",
       code: "DEV-002",
       fullName: "Grace Lim",
       gender: "female",
       dateOfBirth: "1988-09-03",
-      joinDate: d(subYears(today, 4)),
+      joinDate: yearsAgo(4, 40),
       designation: "HR Executive",
       branch: "Branch A",
       department: "Management",
       classification: "local",
       role: "hr_viewer",
-      status: "active",
       managerKey: "admin",
-      approval: { mode: "single", level1: "admin" },
-      login: true,
-      scenario: "HR viewer (read-only)",
+      scenario: "HR viewer, local, about 4 years (service year 5: 11 days)",
     },
     {
-      key: "managerA",
+      key: "daniel",
       code: "DEV-003",
       fullName: "Daniel Tan",
       gender: "male",
       dateOfBirth: "1984-01-22",
-      joinDate: d(subYears(today, 6)),
+      joinDate: yearsAgo(6, 30),
       designation: "Branch Manager",
       branch: "Branch A",
-      department: "Operations",
+      department: "Management",
       classification: "local",
       role: "manager",
-      status: "active",
       managerKey: "admin",
-      approval: { mode: "single", level1: "admin" },
-      login: true,
-      scenario: "Manager, Branch A; Level 2 approver for the team head's staff",
+      scenario: "Manager, local, about 6 years; approves Branch A (level 1) and Branch B (level 1)",
     },
     {
-      key: "managerB",
+      key: "priya",
       code: "DEV-004",
       fullName: "Priya Nair",
       gender: "female",
-      dateOfBirth: "1986-06-15",
-      joinDate: d(subYears(today, 5)),
-      designation: "Branch Manager",
-      branch: "Branch B",
-      department: "Operations",
+      dateOfBirth: "1982-06-15",
+      joinDate: yearsAgo(9, 60),
+      designation: "Senior Therapist",
+      branch: "Branch A",
+      department: "Beauty Therapy",
       classification: "local",
-      role: "manager",
-      status: "active",
-      managerKey: "admin",
-      approval: { mode: "single", level1: "admin" },
-      login: false,
-      scenario: "Manager, Branch B (also covers Branch C)",
+      role: "employee",
+      managerKey: "daniel",
+      scenario: "Local, about 9 years (14 days annual)",
     },
     {
-      key: "teamHead",
+      key: "siti",
       code: "DEV-005",
-      fullName: "Chua Mei Ling",
+      fullName: "Siti Rahman",
       gender: "female",
-      dateOfBirth: "1990-11-08",
-      joinDate: d(subMonths(today, 54)),
-      designation: "Senior Beauty Therapist (Team Head)",
+      dateOfBirth: "1995-11-08",
+      joinDate: yearsAgo(2, 30),
+      designation: "Therapist",
       branch: "Branch A",
       department: "Beauty Therapy",
       classification: "local",
-      role: "manager",
-      status: "active",
-      managerKey: "managerA",
-      approval: { mode: "single", level1: "managerA" },
-      login: true,
-      scenario: "Team head (role manager); Level 1 approver for therapists",
+      role: "employee",
+      managerKey: "daniel",
+      scenario: "Local, about 2 years (9 days annual) + 2 days opening balance",
     },
     {
-      key: "newLocal",
+      key: "kelvin",
       code: "DEV-006",
-      fullName: "Nur Aisyah Binte Salleh",
-      gender: "female",
-      dateOfBirth: "2001-02-17",
-      joinDate: d(subMonths(today, 2)),
-      designation: "Beauty Therapist",
-      branch: "Branch A",
-      department: "Beauty Therapy",
-      classification: "local",
-      role: "employee",
-      status: "active",
-      managerKey: "teamHead",
-      approval: { mode: "two_level", level1: "teamHead", level2: "managerA" },
-      login: false,
-      scenario: "Local, joined 2 months ago: not yet eligible for annual leave",
-    },
-    {
-      key: "veryNewLocal",
-      code: "DEV-007",
-      fullName: "Siti Hajar Binte Osman",
-      gender: "female",
-      dateOfBirth: "2003-07-29",
-      joinDate: d(subDays(today, 20)),
-      designation: "Receptionist",
-      branch: "Branch A",
-      department: "Front Desk",
-      classification: "local",
-      role: "employee",
-      status: "active",
-      managerKey: "managerA",
-      approval: { mode: "single", level1: "managerA" },
-      login: false,
-      scenario: "Local, joined 20 days ago: not yet eligible for MC",
-    },
-    {
-      key: "midYearLocal",
-      code: "DEV-008",
-      fullName: "Rachel Goh",
-      gender: "female",
-      dateOfBirth: "1997-05-05",
-      joinDate: midYearJoin,
-      designation: "Receptionist",
-      branch: "Branch B",
-      department: "Front Desk",
-      classification: "local",
-      role: "employee",
-      status: "active",
-      managerKey: "managerB",
-      approval: { mode: "single", level1: "managerB" },
-      login: false,
-      scenario: "Local, joined mid-year: MC pro-rating",
-    },
-    {
-      key: "anniversaryLocal",
-      code: "DEV-009",
       fullName: "Kelvin Ong",
       gender: "male",
-      dateOfBirth: "1992-12-01",
-      joinDate: d(subYears(today, 3)),
-      designation: "Operations Executive",
+      dateOfBirth: "1999-03-27",
+      joinDate: d(subMonths(today, 2)),
+      designation: "Therapist",
       branch: "Branch B",
-      department: "Operations",
+      department: "Beauty Therapy",
       classification: "local",
       role: "employee",
-      status: "active",
-      managerKey: "managerB",
-      approval: { mode: "single", level1: "managerB" },
-      login: false,
-      scenario: "Local, joined exactly 3 years ago: anniversary boundary",
+      managerKey: "daniel",
+      scenario: "Local, joined 2 months ago: annual not yet eligible, MC eligible",
     },
     {
-      key: "foreign3y",
-      code: "DEV-010",
+      key: "maria",
+      code: "DEV-007",
       fullName: "Maria Santos",
       gender: "female",
-      dateOfBirth: "1991-03-30",
-      joinDate: d(subYears(today, 3)),
-      designation: "Beauty Therapist",
-      branch: "Branch A",
+      dateOfBirth: "1990-07-19",
+      joinDate: yearsAgo(3, 50),
+      designation: "Therapist",
+      branch: "Branch B",
       department: "Beauty Therapy",
       classification: "foreign",
       role: "employee",
-      status: "active",
-      managerKey: "teamHead",
-      approval: { mode: "two_level", level1: "teamHead", level2: "managerA" },
-      login: true,
-      scenario: "Foreign, 3 years: 14-day notice, foreign half-day slots, two-level",
+      managerKey: "daniel",
+      scenario: "Foreign, about 3 years: 14-day notice, foreign half-day slots, two-level",
     },
     {
-      key: "foreign14m",
-      code: "DEV-011",
-      fullName: "Nguyen Thi Linh",
+      key: "nguyen",
+      code: "DEV-008",
+      fullName: "Nguyen Thi Lan",
       gender: "female",
-      dateOfBirth: "1996-08-19",
-      joinDate: d(subMonths(today, 14)),
-      designation: "Beauty Therapist",
-      branch: "Branch A",
+      dateOfBirth: "2000-12-02",
+      joinDate: d(subDays(today, 14)),
+      designation: "Therapist",
+      branch: "Branch B",
       department: "Beauty Therapy",
       classification: "foreign",
       role: "employee",
-      status: "active",
-      managerKey: "teamHead",
-      approval: { mode: "two_level", level1: "teamHead", level2: "managerA" },
-      login: false,
-      scenario: "Foreign, 1 year 2 months: second leave year, carry-forward",
-    },
-    {
-      key: "probation",
-      code: "DEV-012",
-      fullName: "Arjun Kumar",
-      gender: "male",
-      dateOfBirth: "1999-10-10",
-      joinDate: d(subMonths(today, 4)),
-      designation: "Receptionist",
-      branch: "Branch C",
-      department: "Front Desk",
-      classification: "local",
-      role: "employee",
-      status: "probation",
-      managerKey: "managerB",
-      approval: { mode: "single", level1: "managerB" },
-      login: false,
-      scenario: "Status probation (joined 4 months ago)",
-    },
-    {
-      key: "inactive",
-      code: "DEV-013",
-      fullName: "Jason Lee",
-      gender: "male",
-      dateOfBirth: "1994-04-04",
-      joinDate: d(subYears(today, 2)),
-      designation: "Beauty Therapist",
-      branch: "Branch C",
-      department: "Beauty Therapy",
-      classification: "local",
-      role: "employee",
-      status: "inactive",
-      managerKey: "managerB",
-      approval: { mode: "single", level1: "managerB" },
-      login: false,
-      scenario: "Status inactive (deactivated, kept for records)",
+      managerKey: "daniel",
+      scenario: "Foreign, joined 2 weeks ago: annual allowed from join, MC not yet",
     },
   ];
 }
+
+// Branch default routes, by employee key.
+const BRANCH_ROUTES: Record<Branch, { mode: "single" | "two_level"; level1: string; level2: string | null }> = {
+  "Branch A": { mode: "single", level1: "daniel", level2: null },
+  "Branch B": { mode: "two_level", level1: "daniel", level2: "admin" },
+};
+
+const SITI_OPENING_BALANCE = { leaveType: "annual", days: 2, reason: "opening_balance", note: "Opening balance" } as const;
 
 function emailFor(fullName: string): string {
   const local = fullName
@@ -338,28 +215,31 @@ function emailFor(fullName: string): string {
   return `${local}@${EMAIL_DOMAIN}`;
 }
 
-// Fails fast on a bad hierarchy or approval setup before anything is written.
-function validate(list: DevEmployee[]): void {
-  const keys = new Set<string>();
-  for (const e of list) {
-    if (e.managerKey && !keys.has(e.managerKey)) {
-      throw new Error(`${e.key}: manager "${e.managerKey}" must be listed before them.`);
-    }
-    keys.add(e.key);
+// The admin created by db:seed:admin, who must be the only active admin.
+async function findSeedAdmin(): Promise<{ id: string }> {
+  const db = getDb();
+  const email = normalizeEmail(requireEnv("SEED_ADMIN_EMAIL"));
+  const userId = await findUserIdByEmail(db, email);
+  const [admin] = userId
+    ? await db
+        .select({ id: employees.id, role: employees.role })
+        .from(employees)
+        .where(eq(employees.userId, userId))
+    : [];
+  if (!admin || admin.role !== "admin") {
+    throw new Error(`No admin login for ${email}. Run npm run db:seed:admin first.`);
   }
-  for (const e of list) {
-    const approvers =
-      e.approval.mode === "single"
-        ? [e.approval.level1]
-        : [e.approval.level1, e.approval.level2];
-    for (const a of approvers) {
-      if (!keys.has(a)) throw new Error(`${e.key}: unknown approver "${a}".`);
-      if (a === e.key) throw new Error(`${e.key}: cannot be their own approver.`);
-    }
-    if (e.approval.mode === "two_level" && e.approval.level1 === e.approval.level2) {
-      throw new Error(`${e.key}: Level 1 and Level 2 approvers must differ.`);
-    }
+  const others = await db
+    .select({ code: employees.employeeCode })
+    .from(employees)
+    .where(and(eq(employees.role, "admin"), ne(employees.id, admin.id)));
+  if (others.length > 0) {
+    throw new Error(
+      `Other admins exist (${others.map((o) => o.code).join(", ")}). ` +
+        "The dev dataset has exactly one admin: run npm run db:reset:dev.",
+    );
   }
+  return { id: admin.id };
 }
 
 async function main() {
@@ -380,10 +260,9 @@ async function main() {
 
   const password = requirePassword("SEED_DEV_PASSWORD");
   const list = buildEmployees();
-  validate(list);
-
   const db = getDb();
   const summary = createSummary(SCRIPT);
+  const admin = await findSeedAdmin();
 
   // Branches and departments.
   const branchIds = new Map<string, string>();
@@ -399,8 +278,36 @@ async function main() {
     (department.created ? summary.created : summary.existing)(`departments: ${name}`);
   }
 
+  // The admin moves to Branch A / Management and, like the other dev
+  // logins, skips the forced password change. The placeholder branch from
+  // db:seed:admin is then unused and removed.
+  await db
+    .update(employees)
+    .set({
+      branchId: branchIds.get("Branch A")!,
+      departmentId: departmentIds.get("Management")!,
+      mustChangePassword: false,
+    })
+    .where(eq(employees.id, admin.id));
+  summary.updated("employees: admin moved to Branch A / Management, no forced password change");
+  const [placeholder] = await db
+    .select({ id: branches.id })
+    .from(branches)
+    .where(eq(branches.name, ADMIN_PLACEHOLDER_BRANCH));
+  if (placeholder) {
+    const [inUse] = await db
+      .select({ id: employees.id })
+      .from(employees)
+      .where(eq(employees.branchId, placeholder.id))
+      .limit(1);
+    if (!inUse) {
+      await db.delete(branches).where(eq(branches.id, placeholder.id));
+      summary.updated(`branches: removed unused placeholder "${ADMIN_PLACEHOLDER_BRANCH}"`);
+    }
+  }
+
   // Employees, in hierarchy order so each manager already has an id.
-  const employeeIds = new Map<string, string>();
+  const employeeIds = new Map<string, string>([["admin", admin.id]]);
   for (const e of list) {
     const [inserted] = await db
       .insert(employees)
@@ -408,7 +315,7 @@ async function main() {
         employeeCode: e.code,
         fullName: e.fullName,
         email: emailFor(e.fullName),
-        phone: `+65 9000 ${e.code.slice(-3).padStart(4, "0")}`,
+        phone: `+673 71${e.code.slice(-3)} 000`,
         dateOfBirth: e.dateOfBirth,
         gender: e.gender,
         joinDate: e.joinDate,
@@ -416,12 +323,11 @@ async function main() {
         departmentId: departmentIds.get(e.department)!,
         branchId: branchIds.get(e.branch)!,
         classification: e.classification,
-        reportingManagerId: e.managerKey ? employeeIds.get(e.managerKey)! : null,
+        reportingManagerId: employeeIds.get(e.managerKey)!,
         role: e.role,
-        status: e.status,
+        status: "active",
         // Dev logins share SEED_DEV_PASSWORD, so no forced change on first login.
-        mustChangePassword: !e.login,
-        deactivatedAt: e.status === "inactive" ? new Date() : null,
+        mustChangePassword: false,
       })
       .onConflictDoNothing()
       .returning({ id: employees.id });
@@ -446,26 +352,8 @@ async function main() {
     summary.existing(`employees: ${e.code} ${e.fullName}`);
   }
 
-  // Approval workflows.
+  // Logins for everyone except the admin (created by db:seed:admin).
   for (const e of list) {
-    const [inserted] = await db
-      .insert(approvalWorkflows)
-      .values({
-        employeeId: employeeIds.get(e.key)!,
-        mode: e.approval.mode,
-        level1ApproverId: employeeIds.get(e.approval.level1)!,
-        level2ApproverId:
-          e.approval.mode === "two_level" ? employeeIds.get(e.approval.level2)! : null,
-      })
-      .onConflictDoNothing({ target: approvalWorkflows.employeeId })
-      .returning({ id: approvalWorkflows.id });
-    (inserted ? summary.created : summary.existing)(
-      `approval_workflows: ${e.code} (${e.approval.mode})`,
-    );
-  }
-
-  // Logins: one per role (admin, manager, team head, employee, hr_viewer).
-  for (const e of list.filter((x) => x.login)) {
     const employeeId = employeeIds.get(e.key)!;
     const email = emailFor(e.fullName);
 
@@ -480,10 +368,7 @@ async function main() {
 
     const existingUserId = await findUserIdByEmail(db, email);
     if (existingUserId) {
-      await db
-        .update(employees)
-        .set({ userId: existingUserId })
-        .where(eq(employees.id, employeeId));
+      await db.update(employees).set({ userId: existingUserId }).where(eq(employees.id, employeeId));
       summary.updated(`employees: ${e.code} linked to existing login ${email}`);
       continue;
     }
@@ -494,7 +379,47 @@ async function main() {
       db.insert(account).values(login.accountRow),
       db.update(employees).set({ userId: login.userId }).where(eq(employees.id, employeeId)),
     ]);
-    summary.created(`login: ${email} (${e.role}${e.key === "teamHead" ? ", team head" : ""})`);
+    summary.created(`login: ${email} (${e.role})`);
+  }
+
+  // Branch default routes.
+  for (const branch of BRANCHES) {
+    const route = BRANCH_ROUTES[branch];
+    const [inserted] = await db
+      .insert(branchApprovalRoutes)
+      .values({
+        branchId: branchIds.get(branch)!,
+        mode: route.mode,
+        level1ApproverId: employeeIds.get(route.level1)!,
+        level2ApproverId: route.level2 ? employeeIds.get(route.level2)! : null,
+        updatedBy: admin.id,
+      })
+      .onConflictDoNothing({ target: branchApprovalRoutes.branchId })
+      .returning({ id: branchApprovalRoutes.id });
+    (inserted ? summary.created : summary.existing)(`branch_approval_routes: ${branch} (${route.mode})`);
+  }
+
+  // Managers' leave approver = the admin.
+  const [settings] = await db
+    .insert(approvalSettings)
+    .values({ id: 1, managersApproverId: admin.id, updatedBy: admin.id })
+    .onConflictDoNothing({ target: approvalSettings.id })
+    .returning({ id: approvalSettings.id });
+  (settings ? summary.created : summary.existing)("approval_settings: managers' leave approver = admin");
+
+  // Siti's opening balance, once. addAdjustment creates her entitlement rows first.
+  const sitiId = employeeIds.get("siti")!;
+  const [opening] = await db
+    .select({ id: leaveAdjustments.id })
+    .from(leaveAdjustments)
+    .where(and(eq(leaveAdjustments.employeeId, sitiId), eq(leaveAdjustments.reason, "opening_balance")))
+    .limit(1);
+  if (opening) {
+    summary.existing("leave_adjustments: Siti Rahman opening balance");
+  } else {
+    const result = await addAdjustment({ id: admin.id }, sitiId, SITI_OPENING_BALANCE, toDateColumn(todayInBusinessZone()));
+    if (!result.ok) throw new Error(`Siti's opening balance failed: ${result.error}`);
+    summary.created("leave_adjustments: Siti Rahman +2 annual (Opening balance)");
   }
 
   summary.print();

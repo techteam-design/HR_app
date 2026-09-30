@@ -14,6 +14,7 @@ import {
   UsersIcon,
   type IconComponent,
 } from "@/components/ui/icons";
+import { cn } from "@/lib/utils/cn";
 
 // Icon per navigation route. Which routes a role sees is decided by rbac.ts.
 const NAV_ICONS: Record<string, IconComponent> = {
@@ -39,4 +40,19 @@ export function iconFor(href: string): IconComponent {
 // "/reports" must not stay active on "/reports/calendar".
 export function isActivePath(pathname: string, href: string): boolean {
   return pathname === href || (href !== "/reports" && pathname.startsWith(`${href}/`));
+}
+
+// Count pill for a nav item (e.g. pending approvals). Callers hide it at 0.
+export function NavBadge({ count, className }: { count: number; className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-plum-900 px-1.5 text-[11px] font-semibold text-surface",
+        className,
+      )}
+    >
+      {count > 99 ? "99+" : count}
+      <span className="sr-only"> pending</span>
+    </span>
+  );
 }

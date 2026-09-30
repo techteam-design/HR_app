@@ -1,5 +1,6 @@
 import { UpcomingLeaveList } from "@/components/leave/application-list";
 import { BalanceArchCards, LeaveYearCard } from "@/components/leave/balance-cards";
+import { LeaveOverviewPanel } from "@/components/overview/leave-overview";
 import { Alert } from "@/components/ui/alert";
 import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -10,7 +11,11 @@ import { formatDisplayDate, greetingFor, todayIsoInBrunei } from "@/lib/utils/da
 import { requireEmployee } from "@/server/auth.service";
 import { listUpcoming } from "@/server/leave-application.service";
 import { getEmployeeBalances } from "@/server/leave-balance.service";
+import { getLeaveOverview } from "@/server/leave-overview.service";
 
+// Admin: the company leave overview (admins take no leave). HR viewer: the
+// same overview read-only, plus their own leave. Everyone else: their own
+// balances and upcoming leave.
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -19,11 +24,15 @@ export default async function DashboardPage({
   const employee = await requireEmployee();
   const { denied } = await searchParams;
   const firstName = employee.fullName.trim().split(/\s+/)[0] ?? employee.fullName;
-  // Creates any missing entitlement rows for the current periods first.
   const today = todayIsoInBrunei();
-  const [balances, upcoming] = await Promise.all([
-    getEmployeeBalances(employee.id, today),
-    listUpcoming(employee.id, today),
+  const showOverview = can(employee.role, "view_all_records");
+  const takesLeave = can(employee.role, "apply_leave");
+
+  // getEmployeeBalances creates any missing entitlement rows first.
+  const [overview, balances, upcoming] = await Promise.all([
+    showOverview ? getLeaveOverview(today) : Promise.resolve(null),
+    takesLeave ? getEmployeeBalances(employee.id, today) : Promise.resolve(null),
+    takesLeave ? listUpcoming(employee.id, today) : Promise.resolve([]),
   ]);
 
   return (
@@ -37,7 +46,7 @@ export default async function DashboardPage({
           </>
         }
         action={
-          can(employee.role, "apply_leave") ? (
+          takesLeave ? (
             <ButtonLink href="/leave/apply" className="hidden md:inline-flex">
               <PlusIcon width={18} height={18} />
               Apply for leave
@@ -46,29 +55,41 @@ export default async function DashboardPage({
         }
       />
 
-      {balances && !balances.started ? (
-        <Alert tone="notice">
-          Your leave balances start on your join date, {formatDisplayDate(balances.joinDate)}.
-        </Alert>
-      ) : (
-        balances && (
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
-            <section aria-labelledby="balances-title" className="space-y-4">
-              <h2 id="balances-title" className="font-display text-section-title font-medium text-plum-900">
-                Your <em>balances</em>
-              </h2>
-              <BalanceArchCards balances={balances} />
-            </section>
-            <div className="space-y-6 lg:pt-12">
-              <LeaveYearCard balances={balances} />
-              <Card>
-                <p className="eyebrow text-plum-700">Upcoming leave</p>
-                <UpcomingLeaveList items={upcoming} />
-              </Card>
-            </div>
-          </div>
-        )
+      {overview && (
+        <section aria-label="Company leave overview" className="space-y-4">
+          {takesLeave && (
+            <h2 className="font-display text-section-title font-medium text-plum-900">
+              Company <em>leave</em>
+            </h2>
+          )}
+          <LeaveOverviewPanel overview={overview} canDecide={can(employee.role, "decide_any_leave")} />
+        </section>
       )}
+
+      {takesLeave &&
+        (balances && !balances.started ? (
+          <Alert tone="notice">
+            Your leave balances start on your join date, {formatDisplayDate(balances.joinDate)}.
+          </Alert>
+        ) : (
+          balances && (
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+              <section aria-labelledby="balances-title" className="space-y-4">
+                <h2 id="balances-title" className="font-display text-section-title font-medium text-plum-900">
+                  Your <em>balances</em>
+                </h2>
+                <BalanceArchCards balances={balances} />
+              </section>
+              <div className="space-y-6 lg:pt-12">
+                <LeaveYearCard balances={balances} />
+                <Card>
+                  <p className="eyebrow text-plum-700">Upcoming leave</p>
+                  <UpcomingLeaveList items={upcoming} />
+                </Card>
+              </div>
+            </div>
+          )
+        ))}
     </div>
   );
 }

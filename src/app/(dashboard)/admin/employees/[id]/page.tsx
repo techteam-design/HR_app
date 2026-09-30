@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { DetailSection } from "@/components/employees/detail-list";
+import { RouteSummary } from "@/components/approvals/route-summary";
 import { EmployeeActions } from "@/components/employees/employee-actions";
 import { EmployeeStatusBadge } from "@/components/employees/employee-status-badge";
 import { CLASSIFICATION_LABELS, GENDER_LABELS, ROLE_LABELS, unitLabel } from "@/components/employees/labels";
@@ -15,6 +16,7 @@ import { Card } from "@/components/ui/card";
 import { can } from "@/lib/auth/rbac";
 import { isStorageConfigured } from "@/lib/storage/r2";
 import { formatDisplayDate, todayIsoInBrunei } from "@/lib/utils/dates";
+import { approvalRouteFor } from "@/server/approval-route.service";
 import { requireEmployee } from "@/server/auth.service";
 import { photoUrlFor } from "@/server/employee-photo.service";
 import { getEmployeeDetail } from "@/server/employee.service";
@@ -36,11 +38,14 @@ export default async function EmployeeDetailPage({
   if (!employee) notFound();
 
   const today = todayIsoInBrunei();
-  const [photoUrl, balances, adjustments, applications] = await Promise.all([
+  // Admins take no leave: their entitlement rows are kept but not shown.
+  const takesLeave = employee.role !== "admin";
+  const [photoUrl, balances, adjustments, applications, route] = await Promise.all([
     photoUrlFor(employee.photoKey),
-    getEmployeeBalances(employee.id, today),
-    listAdjustments(employee.id),
-    listApplications(employee.id),
+    takesLeave ? getEmployeeBalances(employee.id, today) : Promise.resolve(null),
+    takesLeave ? listAdjustments(employee.id) : Promise.resolve([]),
+    takesLeave ? listApplications(employee.id) : Promise.resolve([]),
+    approvalRouteFor(employee.id),
   ]);
   const canManage = can(viewer.role, "manage_employees");
   const storageConfigured = isStorageConfigured();
@@ -150,6 +155,12 @@ export default async function EmployeeDetailPage({
         ]}
       />
 
+      <RouteSummary
+        resolved={route.resolved}
+        approvers={route.approvers}
+        canEdit={can(viewer.role, "manage_approval_config")}
+      />
+
       {balances && (
         <EmployeeLeaveBalances
           employeeId={employee.id}
@@ -159,24 +170,25 @@ export default async function EmployeeDetailPage({
         />
       )}
 
-      <Card className="space-y-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="font-display text-section-title font-medium text-plum-900">
-            Leave <em>requests</em>
-          </h2>
-          {canManage && employee.status !== "inactive" && (
-            <ButtonLink href={`/admin/employees/${employee.id}/apply`} variant="secondary">
-              Apply on behalf
-            </ButtonLink>
-          )}
-        </div>
-        <ApplicationList
-          items={applications}
-          today={today}
-          mode={canManage ? "admin" : "view"}
-          emptyText="No leave requests yet."
-        />
-      </Card>
+      {takesLeave && (
+        <Card className="space-y-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="font-display text-section-title font-medium text-plum-900">
+              Leave <em>requests</em>
+            </h2>
+            {canManage && employee.status !== "inactive" && (
+              <ButtonLink href={`/admin/employees/${employee.id}/apply`} variant="secondary">
+                Apply on behalf
+              </ButtonLink>
+            )}
+          </div>
+          <ApplicationList
+            items={applications}
+            mode={canManage ? "admin" : "view"}
+            emptyText="No leave requests yet."
+          />
+        </Card>
+      )}
     </div>
   );
 }

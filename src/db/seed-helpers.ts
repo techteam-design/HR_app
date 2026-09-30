@@ -54,6 +54,15 @@ export function printTarget(scriptName: string): void {
   console.log(`[${scriptName}] Host:            ${url.hostname}\n`);
 }
 
+// The database host only (no user name, password or database name).
+export function databaseHost(): string {
+  try {
+    return new URL(requireEnv("DATABASE_URL")).hostname;
+  } catch {
+    throw new Error("DATABASE_URL is not a valid connection string.");
+  }
+}
+
 export function normalizeEmail(email: string): string {
   return normalizeLoginEmail(email);
 }

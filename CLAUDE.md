@@ -42,11 +42,20 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 
 ## Roles
 - employee: own profile, own balances and history, submit own leave
-- manager: employee rights + approve/reject for direct reports + team calendar
-- admin: full access, including employees, org structure, policies, approval config, overrides, all reports and exports
-- hr_viewer: read-only for other people's data; can view own profile and apply for own leave. Every write endpoint on other employees' data returns 403.
+- manager (team heads use the manager role too): employee rights + approve/reject the requests
+  assigned to them + team calendar
+- admin: the owner; exactly one in production. Full access, including employees, org structure,
+  policies, approval config, overrides, all reports and exports, and deciding ANY pending request at its
+  current level (decide_any_leave). The admin takes NO leave: no apply_leave, no Apply/History pages,
+  no own balances or upcoming leave, no approval route. The admin still applies on staff's behalf.
+  Admin entitlement rows are kept (harmless) but hidden in the UI; Sprint 4 reports must exclude admins.
+- hr_viewer: read-only for other people's data (including the team calendar and the approval setup);
+  can view own profile and apply for own leave. Every write endpoint on other employees' data returns 403.
 - Navigation: the "People" group (Employees, Org chart) needs view_all_records (admin + hr_viewer).
-  The "Admin" group (Departments & branches, Leave policies, Approval setup) is admin only.
+  The "Admin" group (Departments & branches, Leave policies) is admin only, except Approval setup,
+  which hr_viewer sees read-only (page guard view_all_records, edits manage_approval_config).
+  "Approvals" (approve_leave: managers and admin) shows a pending-count badge, hidden at 0 (admin:
+  company-wide pending; others: requests waiting for them).
 - My profile is read-only, except that every employee can upload or remove their own photo.
   /profile only ever loads the signed-in employee's own record (never an id from the URL). All other
   changes go through an HR admin.
@@ -100,17 +109,50 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 - Local staff slots: morning 8:30 AM to 12:30 PM, afternoon 1:30 PM to 5:30 PM
 - Foreign staff slots: morning 9:30 AM to 1:30 PM, afternoon 2:30 PM to 6:30 PM
 
-### Approvals
-- Configured per employee: single-level (one approver) or two-level (team head, then manager)
-- A Level 1 rejection ends the request; it never reaches Level 2
-- Balance is deducted only on final approval
+### Approvals (as implemented, Sprint 3A)
+- Route resolution order, everywhere (submission, approval setup, warnings; pure resolveApprovalRoute()
+  in src/lib/approvals/route-resolution.ts): per-employee override > managers' rule > branch default >
+  no route. The first source that applies is validated; an invalid one never falls through.
+  - Admin: no route needed.
+  - Manager: single level, approved by the "Managers' leave approver" setting (approval_settings, must
+    be an active admin); when unset and there is exactly one active admin, that admin; otherwise "No
+    route". The branch default never applies to managers.
+  - Employee and hr_viewer: their branch's default route (branch_approval_routes), single level or two
+    levels (team head, then manager).
+  - Override (approval_route_overrides): any person; "reset to default" deletes it.
+- Approvers must be active (or probation) managers or admins; nobody approves themself; level 1 and
+  level 2 differ (Zod + src/lib/approvals/route-config.ts + DB CHECKs). A branch default that makes
+  someone their own approver shows "Own approver" for that person until an override is set.
+- Submission re-resolves the route; a missing or invalid route shows "Your approval route hasn't been
+  set up yet. Please contact HR."
+- The current level's snapshotted approver decides; an admin may decide any pending request at its
+  current level (recorded as the admin; progress says "Approved by X (admin, level 1)").
+- Level 1 approval on a two-level route moves the request to level 2. Any rejection ends it (a level 1
+  rejection never reaches level 2). Remarks optional to approve, required to reject.
+- Balance counts only on final approval. At final approval, balance (approved days only; other pending
+  requests do not count) and overlap are re-checked for the period the dates fall in; if they no longer
+  fit, approval is blocked with a clear message (src/lib/leave-engine/final-approval.ts).
+- Route changes (branch default, override, reset, managers' approver, an applicant's branch or role
+  change) move pending requests for levels not yet decided: at level 1 the request takes the new route
+  as a whole; at level 2 level 1 stands and level 2 goes to the new route's final approver (even if
+  that person approved level 1). Invalid new routes move nothing. Every move is recorded in
+  approval_reassignments (append-only, with cause and changed_by), in the same db.batch as the change.
+- Approver protection: a manager cannot become employee/hr_viewer, and an admin cannot change role or be
+  deactivated, while they approve anyone (branch default, override, managers' approver incl. the
+  only-admin fallback, or pending requests waiting for them). The message lists whom they approve.
 
 ### Balance and adjustments
 - Balance per employee, leave type and entitlement period:
   entitled_days + carried_forward_days + sum(adjustments) - sum(approved application days)
 - Adjustments (leave_adjustments) are admin-only and append-only: never edit or delete an adjustment.
   To fix a wrong adjustment, add a new one that offsets it.
-- Adjustment reasons: opening_balance, correction. Every adjustment needs a note.
+- Adjustment reasons: opening_balance, correction (manual, admin only; refused if they would take the
+  available balance below 0). Every adjustment needs a note.
+- System reason carry_forward_recalculation: when annual leave of a previous leave year is finally
+  approved or cancelled after the next year's row exists (its carry-forward was fixed at creation), a
+  correcting adjustment (new carried - stored carried - earlier corrections) is added to the next-year
+  row in the same transaction, created_by = the actor. Exempt from the no-negative rule. The displayed
+  forfeited days are recomputed when a row has corrections (the stored value is never changed).
 
 ## Leave engine formulas (as implemented, Sprint 2A)
 Pure functions in src/lib/leave-engine/, tested in tests/leave-engine/. Dates are "YYYY-MM-DD" strings;
@@ -187,27 +229,37 @@ Pure functions in src/lib/leave-engine/, tested in tests/leave-engine/. Dates ar
     (cancelled and rejected ignored). Strict: two half days on the same date are refused too ("You
     already have a half day on {date}. To take the whole day, cancel that request and apply for a full
     day.").
-- Submit (src/server/leave-application.service.ts): the application and its leave_application_days
-  rows are inserted in one db.batch. start_date/end_date = first/last ticked date; total_days = sum of
-  portions; status pending, current_level 1; approval_mode and the level 1/2 approvers are snapshotted
-  from approval_workflows.
+- Submit (src/server/leave-application.service.ts): runs in the employee's locked transaction (see
+  "Concurrency"); balance and overlaps are re-checked inside it, then the application and its
+  leave_application_days rows are inserted. start_date/end_date = first/last ticked date; total_days =
+  sum of portions; status pending, current_level 1; approval_mode and the level 1/2 approvers are
+  snapshotted from the resolved route. Admins cannot be the applicant (409).
 - Apply on behalf (admin, /admin/employees/[id]/apply, POST /api/employees/[id]/applications): same
   form and rules, backdating allowed, submitted_by = the admin. Overriding the foreign notice rule needs
   override_notice and a reason (notice_overridden, override_by, override_reason).
-- Cancellation (cancellation.ts, POST /api/leave/applications/[id]/cancel): the employee cancels their
-  own pending request any time, and their own approved request only before its first ticked date; an
-  admin cancels any pending or approved request with a required note (cancellation_note). Rejected and
-  cancelled are final. Sets status cancelled, cancelled_at, cancelled_by; balances restore
-  automatically. The update is conditional on the status (and start date) it was checked against.
+- Cancellation (cancellation.ts, POST /api/leave/applications/[id]/cancel, any signed-in user; the
+  service decides; CHANGED in Sprint 3A): the employee cancels their own request only while PENDING
+  (including after level 1 approval); staff can NOT cancel approved leave. An approver on the request's
+  route (level 1 or 2) cancels APPROVED leave at any time (pending: reject instead); an admin cancels any
+  pending or approved request. Both need a note (cancellation_note). Rejected and cancelled are final.
+  Runs in the locked transaction; the update is conditional on the status it was checked against;
+  balances restore automatically (plus the carry-forward correction above when needed). Cancel is
+  offered on the approver queue ("Decided by me"), the team calendar detail and the employee page.
 - APIs: GET/POST /api/leave/applications (own; the employee always comes from the session),
   POST /api/leave/applications/[id]/cancel, POST /api/employees/[id]/applications (manage_employees).
 
-## Proposed leave rules (pending client confirmation)
-### Leave cancellation (implemented as proposed in Sprint 2B; still to be confirmed)
-- An employee can cancel their own pending request at any time
-- An employee can cancel their own approved leave only before its start date
-- Admin can cancel any request, with a required note
-- Balances restore automatically because they are calculated from approved applications
+## Concurrency (as implemented, Sprint 3A)
+- Balance-affecting writes (submit, apply on behalf, final approval, cancel, adjustments) run in
+  withEmployeeLock (src/db/transaction.ts): the Neon WebSocket driver (Pool with max 1, created and
+  closed within the request, as Workers require), one transaction, SET LOCAL lock_timeout '5s', then
+  pg_advisory_xact_lock(5301, hashtext(employee_id)), then the re-check and the writes. runLocked
+  (leave-period.service.ts) maps a lock timeout to 409 "please try again". Everything else stays on
+  neon-http (getDb()).
+- Non-final decisions (level 1 approval, rejections) are one conditional statement on neon-http:
+  UPDATE ... WHERE status = 'pending' AND current_level = expected, feeding the approval_actions INSERT.
+  The unique (application_id, level) index blocks double decisions.
+- npm run db:race-check (dev only) fires two over-balance submissions and a double approval at once
+  against the dev database and expects exactly one of each to succeed.
 
 ## Employee profile fields
 Full name, employee ID, join date, date of birth, gender (male/female), phone, email, photo (R2),
@@ -233,12 +285,9 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Confirm the business is in Brunei (Asia/Brunei time zone, Brunei public holidays for Phase 2).
 - MC backdating window: PROVISIONAL 14 days (MC_BACKDATE_DAYS). Confirm the number, or whether MC
   should only be submitted after the sick day.
-- Who approves the owner's / top admin's leave
-- Rule for which employees get single-level vs two-level approval
 - Carry-forward expiry (none assumed)
 - Foreign staff annual leave eligibility: 0 months, per the proposal (only local staff have the 3-month
   rule); confirm with client
-- Leave cancellation rules (see "Proposed leave rules" above)
 - Brand assets (PWA icons, theme colours) and the UAT sign-off person
 
 ### Internal to-dos
@@ -252,26 +301,26 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Enable Smart Placement (wrangler.jsonc "placement": { "mode": "smart" }) for production, so the Worker
   runs near the Neon Singapore database.
 - Deploy production from GitHub Actions on Linux rather than from a Windows machine.
-- Dev seed dates drift: seed-dev.ts computes dates from the day it first runs, and re-runs leave existing
-  rows unchanged. Service lengths, and which employee counts as the mid-year joiner, go stale over time.
+- Dev seed dates drift: seed-dev.ts computes join dates from the day it runs, and re-runs leave existing
+  rows unchanged. Run npm run db:reset:dev to refresh the scenarios (see "Dev data").
 - Database-backed rate limiting before go-live (Sprint 4).
 - R2 CORS rule for the production bucket and origin, when production is set up.
-- Sprint 3 design decision: neon-http only supports db.batch (no interactive transactions), so approvals
-  must prevent two concurrent approvals from exceeding a balance. Options to evaluate in Sprint 3: a
-  conditional single-statement write, or the neon-serverless WebSocket driver for that path. The same
-  applies to the adjustment negative-balance check (read, then insert) and to leave submission: it
-  checks the balance and overlaps, then inserts, so two simultaneous submissions could both pass.
-- Sprint 3: approvers are snapshotted at submission; decide what happens when a snapshotted approver is
-  deactivated or leaves (reassign pending requests).
+- An employee promoted to admin keeps any pending requests with their current approvers (admins need
+  no route, so nothing is reassigned); they can still be decided or cancelled.
+- Removing a branch default leaves that branch's pending requests with their current approvers.
 - The join-date activity check (withActivity) looks at application start/end dates; leave applications
   have no foreign key to entitlement rows, so a request submitted during a join-date change is not
   blocked by the database.
-- Sprint 3: decide how late approvals or cancellations of previous-period leave affect the carry-forward
-  already stored on the new annual row (it is fixed when that row is created).
+- Carry-forward corrections reach only the next leave year (not a year after that), and the annual
+  balance card's "includes N carried forward" still shows the stored carried days (the correction is
+  in the adjustments, so totals are right).
 - Go-live order: import employees with their correct join dates, then run npm run db:entitlements, then
   load opening balances as opening_balance adjustments. (Once a current row has an adjustment, its join
   date can no longer be changed in the app.)
 - Carry-forward expiry is stored (carry_forward_expires_on) but not yet applied to balances.
+- Before UAT (Sprint 4): add a dev scenario for the carry-forward correction (a seeded previous-year
+  annual row for one employee), so late approvals/cancellations of previous-year leave can be tested
+  by hand. The reset only creates current-period rows today.
 
 ## Design system ("D · Lavender silk")
 - Rule: use tokens and src/components/ui components; never hardcode colours (no hex/rgb in components).
@@ -303,6 +352,10 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   needs the CRON_SECRET secret or the daily job fails (visible under the Worker's cron events).
 - src/proxy.ts runs as Node.js middleware, which OpenNext supports only experimentally.
 - TODO before production: remove the sign-in timing log in src/app/api/auth/[...all]/route.ts.
+- The balance-affecting writes open a WebSocket to Neon per request (Pool created and closed in the
+  request); no Hyperdrive or extra binding is used.
+- After migrations 0002/0003 (approval_workflows dropped), older Worker builds fail on leave submission:
+  redeploy staging whenever the dev database is migrated.
 
 ## Project status and history
 ### Sprint 1 (complete)
@@ -321,11 +374,12 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Org chart: src/app/(dashboard)/admin/org-chart, src/server/org-chart.service.ts,
   src/lib/employees/org-tree.ts, src/components/org/org-chart.tsx.
 - My profile: src/app/(dashboard)/profile/page.tsx.
-- Photos: src/server/employee-photo.service.ts, src/lib/employees/photo-key.ts, src/app/api/me/photo/**,
+- Photos (/api/upload is the admin's presigned upload URL for any employee's photo, manage_employees):
+  src/server/employee-photo.service.ts, src/lib/employees/photo-key.ts, src/app/api/me/photo/**,
   src/app/api/employees/[id]/photo, src/components/employees/photo-upload.tsx.
 - Design system: src/app/globals.css, src/components/ui/, src/components/layout/, /design-preview.
 - Seeds: src/db/seed.ts (leave policies), seed-admin.ts (first admin, production-safe),
-  seed-dev.ts (dev data only, needs ALLOW_DEV_SEED=true).
+  seed-dev.ts (dev data only, needs ALLOW_DEV_SEED=true; see "Dev data").
 - Tests: tests/{auth,employees,org,validations,utils}.
 - Still placeholders after Sprint 1: leave, approvals, reports and team calendar pages;
   /api/cron/reminders (returns 501).
@@ -376,12 +430,76 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Admin cancellation notes are stored (cancellation_note); on-behalf submissions record the admin
   (submitted_by).
 
-### Open items carried to Sprint 3
-- Concurrency: submission, approval and the adjustment check all read then write (neon-http has no
-  interactive transactions); see "Internal to-dos".
+### Sprint 3A (built; manual testing pending)
+- Schema: migration 0002 (drizzle/0002_approval_routes.sql) adds approval_settings (one row: the
+  managers' leave approver), branch_approval_routes, approval_route_overrides, approval_reassignments
+  (+ enum approval_reassignment_cause), adjustment_reason carry_forward_recalculation, CHECKs on
+  leave_applications (mode vs level 2 and level, not own approver) and approval_actions (reject needs
+  remarks), and an index on approval_actions (approver_id, acted_at). Migration 0003 drops
+  approval_workflows (replaced by the overrides).
+- Pure rules: src/lib/approvals/ (route-resolution, route-config, decision, progress, reassignment),
+  src/lib/leave-engine/ (final-approval, carry-forward-correction, cancellation rewritten),
+  src/lib/calendar/month-grid.ts, src/lib/overview/activity.ts. rbac: admin loses apply_leave, new
+  admin-only decide_any_leave, hr_viewer gains view_team_calendar, NavItem badge.
+- Services: approval-route.service.ts (resolver inputs, routes, reassignment, setup page),
+  approval.service.ts (queue, decisions, nav count), leave-period.service.ts (period balance reads on
+  a Reader, runLocked, carry-forward correction), team-calendar.service.ts, leave-overview.service.ts;
+  leave-application / leave-balance / employee services updated. src/db/transaction.ts (withEmployeeLock).
+- APIs: PUT /api/approval-routes/settings, PUT/DELETE /api/approval-routes/branches/[branchId],
+  PUT/DELETE /api/approval-routes/employees/[id], POST /api/approval-routes/employees/bulk (all
+  manage_approval_config); POST /api/approvals/[id] (approve_leave; {action, remarks, expectedLevel});
+  the cancel route now only needs a session.
+- Pages: /approvals (Waiting for me, All pending for admin, Decided by me), /admin/approval-config
+  (managers' approver, branch defaults, employee routes with filters, inline and bulk overrides, reset),
+  /team-calendar (month grid; list per day on mobile; approved solid, pending outlined; detail with
+  Cancel), admin/hr_viewer dashboard overview (today by branch, next 7 days, pending, by branch, recent
+  activity, quick links), route card on the employee page, approval progress on history and
+  dashboard. Components in src/components/approvals, calendar, overview.
+- Dev data: npm run db:reset:dev (see "Dev data"); db:seed is insert-only (never overwrites policies).
+- Tests: tests/approvals, tests/calendar, tests/overview, tests/db/transaction, new engine and
+  validation tests; cancellation and rbac tests updated for the new rules.
+
+### Sprint 3A decisions
+- Admin takes no leave; managers' leave goes to the "Managers' leave approver" (fallback: the only
+  active admin). Branch defaults cover employees and HR viewers; overrides win over everything.
+- Staff cancel pending only; approvers cancel approved leave; admin cancels both (note required).
+- Late approvals/cancellations of previous-year annual leave correct the next year's carry-forward with
+  a system adjustment (option C).
+- "On leave today" counts approved leave only; the next 7 days also show pending (labelled). Staff
+  counts exclude admins.
+- The manager's team calendar = direct reports + everyone they approve (routes) + anyone whose request
+  is snapshotted to them.
+
+### Open items carried to Sprint 3B
+- Resend email notifications (submit, approve, reject, level 2 handoff) and the pending-approval
+  reminder cron (/api/cron/reminders, still 501; needs a second cron trigger in custom-worker.ts and
+  wrangler.jsonc). The resend package is not installed yet, and the email templates are empty .tsx
+  files (React Email is not an approved package).
+- DNS move of hr.sbcwellness.com to Cloudflare.
 - CRON_SECRET must be set as a Worker secret on staging (and later production), or the daily
   entitlement job fails.
-- Approvals (approver screens, two-level flow, deducting on final approval) and approval emails.
+- Redeploy staging after this sprint (the dev database no longer has approval_workflows).
+
+### Dev data
+- WARNING: staging uses the SAME Neon dev branch as local dev. Resetting dev data also resets staging.
+- `npm run db:reset:dev` (src/db/reset-dev.ts): needs ALLOW_DEV_SEED=true, refuses NODE_ENV=production,
+  prints the database host and asks you to type RESET DEV. Deletes all app data and all Better Auth
+  users/sessions/accounts (schema kept), then runs db:seed (MC rounds up), db:seed:admin, db:seed:dev
+  and db:entitlements. Running it twice gives the same result.
+- The team (seed-dev.ts, join dates relative to today in Brunei; logins use SEED_DEV_PASSWORD at
+  @example.test, except the admin, who uses SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD):
+  - Admin (seed-admin login): the ONLY admin; Branch A, Management. Takes no leave.
+  - Grace Lim: hr_viewer, Branch A, local, ~4 years. Reports to the admin.
+  - Daniel Tan: manager, Branch A, local, ~6 years. Reports to the admin.
+  - Priya Nair: employee, Branch A, local, ~9 years (14 days annual).
+  - Siti Rahman: employee, Branch A, local, ~2 years, +2 days opening-balance adjustment.
+  - Kelvin Ong: employee, Branch B, local, joined 2 months ago (annual not yet eligible, MC eligible).
+  - Maria Santos: employee, Branch B, foreign, ~3 years.
+  - Nguyen Thi Lan: employee, Branch B, foreign, joined 2 weeks ago (annual allowed, MC not yet).
+  - The five employees report to Daniel. Departments: Management, Beauty Therapy.
+- Routes: Branch A default single level (Daniel); Branch B default two-level (Daniel, then the admin);
+  managers' leave approver = the admin; no overrides. No leave applications are seeded.
+- Tests never depend on seeded users (they use in-memory fixtures).
 
 ### Environments
 - Local dev: Neon "dev" branch (values in .env.local), `npm run dev`.
@@ -418,9 +536,10 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Sprint 2A (done): entitlement engine, balances, opening balances, leave policies page, daily
   entitlement job, dashboard balances.
 - Sprint 2B (done): per-date day selection, leave application, validation, cancellation, history.
-- Sprint 3 (next): approvals (approver inbox, single and two-level flow, a Level 1 rejection ends the
-  request, balance deducted on final approval), notifications via Resend (including reminders,
-  /api/cron/reminders), the notice card, the concurrency fix, and the DNS move to Cloudflare.
+- Sprint 3A (built): approval routes and setup, approver queue, two-level flow, final-approval
+  re-check, new cancellation rules, team calendar, admin/HR overview, the concurrency fix.
+- Sprint 3B (next): notifications via Resend (including reminders, /api/cron/reminders), the notice
+  card, and the DNS move to Cloudflare.
 - Sprint 4: reports, exports, production go-live.
 
 ### How we work
@@ -430,6 +549,9 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Never deploy, run migrations or run seeds unless asked.
 - No schema changes without asking first.
 - Every task report lists the files changed and the tsc, eslint and vitest results.
+- Run tsc before `npm run cf:build`, or after deleting .open-next/: custom-worker.ts imports
+  .open-next/worker.js, and with allowJs tsc follows it into the whole bundle and runs out of memory.
+  tsconfig is intentionally left as is.
 - Every task ends with a manual test plan.
 
 ## Conventions

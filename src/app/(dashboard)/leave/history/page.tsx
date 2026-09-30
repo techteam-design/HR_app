@@ -94,7 +94,6 @@ export default async function LeaveHistoryPage({
 
       <ApplicationList
         items={items}
-        today={today}
         mode="own"
         emptyText={filtered ? "No requests match these filters." : "You haven't requested any leave yet."}
       />

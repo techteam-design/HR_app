@@ -3,6 +3,7 @@ import { NavLinks } from "@/components/layout/nav-links";
 import { UserPanel } from "@/components/layout/user-panel";
 import { Logo } from "@/components/ui/logo";
 import { navigationFor, ROLE_LABELS } from "@/lib/auth/rbac";
+import { pendingApprovalCount } from "@/server/approval.service";
 import { requireEmployee } from "@/server/auth.service";
 import { photoUrlFor } from "@/server/employee-photo.service";
 
@@ -10,7 +11,12 @@ import { photoUrlFor } from "@/server/employee-photo.service";
 // layouts are not re-run on every client-side navigation.
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const employee = await requireEmployee();
-  const navItems = navigationFor(employee.role);
+  // Approvals badge: an admin sees every pending request, an approver the
+  // requests waiting for them. Hidden at 0.
+  const pendingApprovals = await pendingApprovalCount(employee);
+  const navItems = navigationFor(employee.role).map((item) =>
+    item.href === "/approvals" ? { ...item, badge: pendingApprovals } : item,
+  );
   // Designation under the name, falling back to the role label.
   const subtitle = employee.designation.trim() || ROLE_LABELS[employee.role];
   // Signed from the key already on the session lookup: no extra query. Null

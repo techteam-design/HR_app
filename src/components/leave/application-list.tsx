@@ -5,23 +5,22 @@ import { cn } from "@/lib/utils/cn";
 import { formatDateRange, formatDisplayDate, formatWeekdayDate, todayIsoInBrunei } from "@/lib/utils/dates";
 import type { ApplicationItem } from "@/server/leave-application.service";
 
+import { ApprovalProgress } from "./approval-progress";
 import { CancelApplicationButton } from "./cancel-application-button";
 import { approverRoute, daysLabel, HALF_DAY_SLOT_LABELS, LEAVE_LABELS } from "./labels";
 
 // A list of leave requests: on the employee's own history, and (for admins
 // and HR viewers) on the employee detail page. Display only; cancelling is
 // enforced by the server.
-//   own:   the employee may cancel pending, or approved before the first day
+//   own:   the employee may cancel their own PENDING requests
 //   admin: an admin may cancel any pending or approved request, with a note
 //   view:  no actions (HR viewer)
 export function ApplicationList({
   items,
-  today,
   mode,
   emptyText,
 }: {
   items: ApplicationItem[];
-  today: string;
   mode: "own" | "admin" | "view";
   emptyText: string;
 }) {
@@ -35,7 +34,7 @@ export function ApplicationList({
         const cancellable =
           mode === "admin"
             ? item.status === "pending" || item.status === "approved"
-            : mode === "own" && canEmployeeCancel(item.status, item.startDate, today);
+            : mode === "own" && canEmployeeCancel(item.status);
         return (
           <li key={item.id} className="rounded-card border border-border bg-surface p-4 sm:p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -53,6 +52,7 @@ export function ApplicationList({
                   Submitted {formatDisplayDate(todayIsoInBrunei(item.submittedAt))}
                   {item.submittedByName && ` by ${item.submittedByName}`} · Approval: {approverRoute(item.approvers)}
                 </p>
+                <ApprovalProgress progress={item.progress} />
                 {item.noticeOverridden && <p className="text-[13px] text-muted">Notice rule overridden by an admin.</p>}
                 {item.reason && <p className="text-[13px] break-words text-muted">Reason: {item.reason}</p>}
                 {item.status === "cancelled" && item.cancelledAt && (
@@ -67,7 +67,7 @@ export function ApplicationList({
                 <CancelApplicationButton
                   applicationId={item.id}
                   summary={`${LEAVE_LABELS[item.code]}, ${range} (${days})`}
-                  asAdmin={mode === "admin"}
+                  noteRequired={mode === "admin"}
                 />
               )}
             </div>
@@ -113,6 +113,9 @@ export function UpcomingLeaveList({ items }: { items: ApplicationItem[] }) {
             </span>
           </span>
           <StatusBadge status={item.status} />
+          {item.status === "pending" && item.progress.summary && (
+            <span className="block w-full text-[13px] text-muted">{item.progress.summary}</span>
+          )}
         </li>
       ))}
     </ul>

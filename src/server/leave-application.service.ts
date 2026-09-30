@@ -2,7 +2,8 @@ import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 import { getDb } from "@/db";
-import { approvalWorkflows, employees, leaveApplicationDays, leaveApplications, leaveTypes } from "@/db/schema";
+import { approvalActions, employees, leaveApplicationDays, leaveApplications, leaveTypes } from "@/db/schema";
+import { approvalProgress, type Progress } from "@/lib/approvals/progress";
 import { can, type Role } from "@/lib/auth/rbac";
 import { cancelDecision, type ApplicationStatus } from "@/lib/leave-engine/cancellation";
 import type { Classification, LeaveTypeCode } from "@/lib/leave-engine/constants";
@@ -27,51 +28,37 @@ import {
   type HistoryFilter,
 } from "@/validations/leave";
 
+import { approvalRouteFor, type Approver } from "./approval-route.service";
 import { databaseEntitlementStore } from "./entitlement.service";
 import { getEmployeeBalances } from "./leave-balance.service";
-import { loadLeavePolicies } from "./leave-policy.service";
+import { applyCarryForwardCorrection, bookedOn, periodBalance, runLocked } from "./leave-period.service";
+import { loadLeavePolicies, type LeavePolicy } from "./leave-policy.service";
 import { fail, UUID, type ServiceResult } from "./service-result";
 
 // Leave applications: submit (own or by an admin on someone's behalf), list,
 // cancel. Every rule lives in src/lib/leave-engine/validation.ts; this file
 // loads its inputs and writes the result.
 //
-// Known gap (Sprint 3): submission checks the balance and then inserts, in two
-// steps (neon-http has no interactive transactions), so two simultaneous
-// submissions could both pass the balance check.
+// Submitting and cancelling are balance-affecting writes: they run in the
+// employee's locked transaction (runLocked / withEmployeeLock), and
+// submission re-checks the balance and overlaps inside it before writing.
 
 // Booked dates this far back are sent to the form for the overlap check (the
 // server always checks the exact range).
 const BOOKED_LOOKBACK_DAYS = 60;
 
-export type Approver = { level: 1 | 2; id: string; name: string };
+export type { Approver };
 
 export type ApprovalRoute = { mode: "single" | "two_level"; approvers: Approver[] };
 
+export const ADMIN_TAKES_NO_LEAVE = "Admins don't take leave in this system.";
+
+// The employee's resolved route, or null when it is missing or not valid
+// (the form then shows "Your approval route hasn't been set up yet").
 async function findApprovalRoute(employeeId: string): Promise<ApprovalRoute | null> {
-  const level1 = alias(employees, "level1_approver");
-  const level2 = alias(employees, "level2_approver");
-  const [row] = await getDb()
-    .select({
-      mode: approvalWorkflows.mode,
-      level1Id: approvalWorkflows.level1ApproverId,
-      level1Name: level1.fullName,
-      level2Id: approvalWorkflows.level2ApproverId,
-      level2Name: level2.fullName,
-    })
-    .from(approvalWorkflows)
-    .innerJoin(level1, eq(level1.id, approvalWorkflows.level1ApproverId))
-    .leftJoin(level2, eq(level2.id, approvalWorkflows.level2ApproverId))
-    .where(eq(approvalWorkflows.employeeId, employeeId))
-    .limit(1);
-  if (!row) return null;
-  const approvers: Approver[] = [{ level: 1, id: row.level1Id, name: row.level1Name }];
-  if (row.mode === "two_level" && row.level2Id && row.level2Name) {
-    approvers.push({ level: 2, id: row.level2Id, name: row.level2Name });
-  }
-  // A two-level route without its second approver is incomplete.
-  if (row.mode === "two_level" && approvers.length < 2) return null;
-  return { mode: row.mode, approvers };
+  const { resolved, approvers } = await approvalRouteFor(employeeId);
+  if (resolved.status !== "ok") return null;
+  return { mode: resolved.mode, approvers };
 }
 
 type BookedDay = { date: IsoDate; portion: number; status: string; leaveTypeId: string };
@@ -125,6 +112,7 @@ export type ApplyContext = {
   employee: {
     id: string;
     fullName: string;
+    role: Role;
     joinDate: IsoDate;
     classification: Classification;
     status: "active" | "inactive" | "probation";
@@ -140,13 +128,13 @@ async function loadContext(
   employeeId: string,
   today: IsoDate,
   bookedFrom: IsoDate,
-): Promise<(ApplyContext & { booked: BookedDay[] }) | null> {
+): Promise<(ApplyContext & { booked: BookedDay[]; policies: LeavePolicy[] }) | null> {
   if (!UUID.test(employeeId)) return null;
   const policies = await loadLeavePolicies();
   const [balances, person, approvalRoute, booked] = await Promise.all([
     getEmployeeBalances(employeeId, today, policies),
     getDb()
-      .select({ fullName: employees.fullName })
+      .select({ fullName: employees.fullName, role: employees.role })
       .from(employees)
       .where(eq(employees.id, employeeId))
       .limit(1),
@@ -192,6 +180,7 @@ async function loadContext(
     employee: {
       id: balances.employeeId,
       fullName: person[0].fullName,
+      role: person[0].role,
       joinDate: balances.joinDate,
       classification: balances.classification,
       status: balances.status,
@@ -200,6 +189,7 @@ async function loadContext(
     types,
     bookedDays: bookedByDate(booked),
     booked,
+    policies,
   };
 }
 
@@ -221,6 +211,12 @@ export type SubmitOptions =
 
 export type Submitted = { id: string; status: "pending"; totalDays: number; approvers: Approver[] };
 
+function refused(issues: ReturnType<typeof validateApplication>) {
+  return fail(400, issues.length === 1 ? issues[0].message : "Please fix the problems below.", {
+    fieldErrors: issuesByField(issues),
+  });
+}
+
 export async function submitApplication(
   employeeId: string,
   input: ApplicationInput,
@@ -231,12 +227,16 @@ export async function submitApplication(
   const bookedFrom = [dates[0] ?? input.startDate, addDays(today, -BOOKED_LOOKBACK_DAYS)].sort()[0];
   const context = await loadContext(employeeId, today, bookedFrom);
   if (!context) return fail(404, "Employee not found");
+  if (context.employee.role === "admin") return fail(409, ADMIN_TAKES_NO_LEAVE);
   if (context.employee.status === "inactive") {
     return fail(409, "This employee is inactive. Reactivate them before applying for leave.");
   }
 
   const type = context.types.find((t) => t.code === input.leaveType);
-  if (!type) return fail(400, "Please check the highlighted fields.", { fieldErrors: { leaveType: "Choose a leave type" } });
+  const policy = context.policies.find((p) => p.code === input.leaveType);
+  if (!type || !policy) {
+    return fail(400, "Please check the highlighted fields.", { fieldErrors: { leaveType: "Choose a leave type" } });
+  }
 
   const halfDay = input.dayType === "half";
   const days: SelectedDay[] = dates.map((date) => ({ date, portion: halfDay ? 0.5 : 1 }));
@@ -263,7 +263,7 @@ export async function submitApplication(
 
   const noticeApplies = input.leaveType === "annual" && context.employee.classification === "foreign";
   const noticeOverridden = options.onBehalf && options.noticeOverride && noticeApplies;
-  const issues = validateApplication(request, {
+  const validationContext = {
     today,
     employee: context.employee,
     policy: type.policy,
@@ -272,24 +272,30 @@ export async function submitApplication(
     hasApprovalRoute: context.approvalRoute !== null,
     onBehalf: options.onBehalf,
     noticeOverridden,
-  });
-  if (issues.length > 0) {
-    return fail(400, issues.length === 1 ? issues[0].message : "Please fix the problems below.", {
-      fieldErrors: issuesByField(issues),
-    });
-  }
+  };
+  const issues = validateApplication(request, validationContext);
+  if (issues.length > 0) return refused(issues);
 
   const route = context.approvalRoute!;
   const [level1, level2] = route.approvers;
   const id = crypto.randomUUID();
-  const db = getDb();
   const total = totalDays(days);
+  const employee = context.employee;
 
-  // One batch: the application and its dates are saved together or not at all.
-  await db.batch([
-    db.insert(leaveApplications).values({
+  return runLocked(employee.id, async (tx) => {
+    // Authoritative re-check inside the lock: another request may have been
+    // submitted or approved since the checks above.
+    const fresh = periods.length === 1 ? await periodBalance(tx, { employee, policy, period: periods[0], today }) : null;
+    const freshIssues = validateApplication(request, {
+      ...validationContext,
+      balances: fresh ? [fresh] : [],
+      bookedDays: await bookedOn(tx, employee.id, dates),
+    });
+    if (freshIssues.length > 0) return refused(freshIssues);
+
+    await tx.insert(leaveApplications).values({
       id,
-      employeeId: context.employee.id,
+      employeeId: employee.id,
       leaveTypeId: type.leaveTypeId,
       startDate: dates[0],
       endDate: dates[dates.length - 1],
@@ -306,13 +312,12 @@ export async function submitApplication(
       overrideBy: noticeOverridden && options.onBehalf ? options.admin.id : null,
       overrideReason: noticeOverridden && options.onBehalf ? options.overrideReason : null,
       submittedBy: options.onBehalf ? options.admin.id : null,
-    }),
-    db.insert(leaveApplicationDays).values(
-      days.map((day) => ({ applicationId: id, date: day.date, portion: day.portion.toFixed(1) })),
-    ),
-  ]);
-
-  return { ok: true, id, status: "pending", totalDays: total, approvers: route.approvers };
+    });
+    await tx
+      .insert(leaveApplicationDays)
+      .values(days.map((day) => ({ applicationId: id, date: day.date, portion: day.portion.toFixed(1) })));
+    return { ok: true, id, status: "pending", totalDays: total, approvers: route.approvers };
+  });
 }
 
 async function pastPeriodBalance(
@@ -344,6 +349,7 @@ async function pastPeriodBalance(
 
 export type ApplicationItem = {
   id: string;
+  employeeId: string;
   code: LeaveTypeCode;
   typeName: string;
   startDate: IsoDate;
@@ -353,8 +359,13 @@ export type ApplicationItem = {
   totalDays: number;
   reason: string | null;
   status: ApplicationStatus;
+  approvalMode: "single" | "two_level";
+  currentLevel: number;
   submittedAt: Date;
+  // The approver assigned to each level.
   approvers: Approver[];
+  // "Approved by X (level 1), waiting for Y", with each decision's remarks.
+  progress: Progress;
   // Set when an admin applied on the employee's behalf.
   submittedByName: string | null;
   noticeOverridden: boolean;
@@ -364,7 +375,7 @@ export type ApplicationItem = {
   days: { date: IsoDate; portion: number }[];
 };
 
-async function queryApplications(where: SQL | undefined, order: SQL[], limit?: number): Promise<ApplicationItem[]> {
+export async function queryApplications(where: SQL | undefined, order: SQL[], limit?: number): Promise<ApplicationItem[]> {
   const level1 = alias(employees, "level1_approver");
   const level2 = alias(employees, "level2_approver");
   const submitter = alias(employees, "submitter");
@@ -373,6 +384,7 @@ async function queryApplications(where: SQL | undefined, order: SQL[], limit?: n
   const query = db
     .select({
       id: leaveApplications.id,
+      employeeId: leaveApplications.employeeId,
       code: leaveTypes.code,
       typeName: leaveTypes.name,
       startDate: leaveApplications.startDate,
@@ -382,6 +394,8 @@ async function queryApplications(where: SQL | undefined, order: SQL[], limit?: n
       totalDays: leaveApplications.totalDays,
       reason: leaveApplications.reason,
       status: leaveApplications.status,
+      approvalMode: leaveApplications.approvalMode,
+      currentLevel: leaveApplications.currentLevel,
       submittedAt: leaveApplications.submittedAt,
       level1Id: leaveApplications.level1ApproverId,
       level1Name: level1.fullName,
@@ -404,26 +418,38 @@ async function queryApplications(where: SQL | undefined, order: SQL[], limit?: n
   const rows = limit ? await query.limit(limit) : await query;
   if (rows.length === 0) return [];
 
-  const dayRows = await db
-    .select({
-      applicationId: leaveApplicationDays.applicationId,
-      date: leaveApplicationDays.date,
-      portion: leaveApplicationDays.portion,
-    })
-    .from(leaveApplicationDays)
-    .where(
-      inArray(
-        leaveApplicationDays.applicationId,
-        rows.map((row) => row.id),
-      ),
-    )
-    .orderBy(asc(leaveApplicationDays.date));
+  const ids = rows.map((row) => row.id);
+  const actor = alias(employees, "actor");
+  const [dayRows, actionRows] = await db.batch([
+    db
+      .select({
+        applicationId: leaveApplicationDays.applicationId,
+        date: leaveApplicationDays.date,
+        portion: leaveApplicationDays.portion,
+      })
+      .from(leaveApplicationDays)
+      .where(inArray(leaveApplicationDays.applicationId, ids))
+      .orderBy(asc(leaveApplicationDays.date)),
+    db
+      .select({
+        applicationId: approvalActions.applicationId,
+        level: approvalActions.level,
+        action: approvalActions.action,
+        approverId: approvalActions.approverId,
+        approverName: actor.fullName,
+        remarks: approvalActions.remarks,
+      })
+      .from(approvalActions)
+      .innerJoin(actor, eq(actor.id, approvalActions.approverId))
+      .where(inArray(approvalActions.applicationId, ids)),
+  ]);
 
   return rows.map((row) => {
     const approvers: Approver[] = [{ level: 1, id: row.level1Id, name: row.level1Name }];
     if (row.level2Id && row.level2Name) approvers.push({ level: 2, id: row.level2Id, name: row.level2Name });
     return {
       id: row.id,
+      employeeId: row.employeeId,
       code: row.code,
       typeName: row.typeName,
       startDate: row.startDate,
@@ -433,8 +459,14 @@ async function queryApplications(where: SQL | undefined, order: SQL[], limit?: n
       totalDays: Number(row.totalDays),
       reason: row.reason,
       status: row.status,
+      approvalMode: row.approvalMode,
+      currentLevel: row.currentLevel,
       submittedAt: row.submittedAt,
       approvers,
+      progress: approvalProgress(
+        { status: row.status, approvalMode: row.approvalMode, currentLevel: row.currentLevel, approvers },
+        actionRows.filter((action) => action.applicationId === row.id),
+      ),
       submittedByName: row.submittedByName,
       noticeOverridden: row.noticeOverridden,
       cancelledAt: row.cancelledAt,
@@ -485,14 +517,16 @@ export async function listUpcoming(employeeId: string, today: IsoDate, limit = 3
 // Cancel
 // ---------------------------------------------------------------------------
 
-// The employee cancels their own request (pending, or approved before its
-// first day); an admin cancels any pending or approved request with a note.
-// Someone else's request is "not found" unless the actor is an admin.
+// The employee cancels their own PENDING request; an approver on the
+// request's route cancels APPROVED leave, and an admin any pending or
+// approved request, both with a note (rules in cancellation.ts). Someone
+// else's request is "not found" unless the actor may cancel it.
+// Cancelling approved annual leave of a previous leave year also corrects
+// the carry-forward already given to the next year.
 export async function cancelApplication(
   actor: { id: string; role: Role },
   applicationId: string,
   input: CancelApplicationInput,
-  today: IsoDate,
 ): Promise<ServiceResult> {
   if (!UUID.test(applicationId)) return fail(404, "Leave request not found");
   const db = getDb();
@@ -500,57 +534,66 @@ export async function cancelApplication(
     .select({
       id: leaveApplications.id,
       employeeId: leaveApplications.employeeId,
+      leaveTypeId: leaveApplications.leaveTypeId,
       status: leaveApplications.status,
-      startDate: leaveApplications.startDate,
+      level1ApproverId: leaveApplications.level1ApproverId,
+      level2ApproverId: leaveApplications.level2ApproverId,
+      joinDate: employees.joinDate,
     })
     .from(leaveApplications)
+    .innerJoin(employees, eq(employees.id, leaveApplications.employeeId))
     .where(eq(leaveApplications.id, applicationId))
     .limit(1);
 
   const isOwner = application?.employeeId === actor.id;
-  const isAdmin = can(actor.role, "manage_employees");
-  if (!application || (!isOwner && !isAdmin)) return fail(404, "Leave request not found");
+  const isAdmin = can(actor.role, "decide_any_leave");
+  const isApprover =
+    !!application && (application.level1ApproverId === actor.id || application.level2ApproverId === actor.id);
+  if (!application || (!isOwner && !isAdmin && !isApprover)) return fail(404, "Leave request not found");
 
-  const decision = cancelDecision({
-    status: application.status,
-    firstDate: application.startDate,
-    today,
-    isOwner,
-    isAdmin,
-  });
+  const decision = cancelDecision({ status: application.status, isOwner, isApprover, isAdmin });
   if (!decision.allowed) return fail(409, decision.reason);
 
   const note = input.note;
   if (decision.noteRequired && (note?.length ?? 0) < MIN_CANCEL_NOTE_LENGTH) {
     return fail(400, "Please check the highlighted fields.", {
       fieldErrors: {
-        note: `A note is required when an admin cancels a request (at least ${MIN_CANCEL_NOTE_LENGTH} characters).`,
+        note: `A note is required to cancel someone else's request (at least ${MIN_CANCEL_NOTE_LENGTH} characters).`,
       },
     });
   }
 
-  // Conditional update: nothing changes if the status moved on in the
-  // meantime, or (for the employee) if an approved request has started.
-  const updated = await db
-    .update(leaveApplications)
-    .set({
-      status: "cancelled",
-      cancelledAt: new Date(),
-      cancelledBy: actor.id,
-      cancellationNote: decision.asAdmin ? note : null,
-    })
-    .where(
-      and(
-        eq(leaveApplications.id, application.id),
-        eq(leaveApplications.status, application.status),
-        decision.asAdmin || application.status === "pending"
-          ? undefined
-          : sql`${leaveApplications.startDate} > ${today}`,
-      ),
-    )
-    .returning({ id: leaveApplications.id });
-  if (updated.length === 0) {
-    return fail(409, "This request has just changed. Please refresh the page and try again.");
-  }
-  return { ok: true };
+  const policy = (await loadLeavePolicies()).find((p) => p.leaveTypeId === application.leaveTypeId);
+
+  return runLocked(application.employeeId, async (tx) => {
+    // Conditional update: nothing changes if the status moved on meanwhile.
+    const updated = await tx
+      .update(leaveApplications)
+      .set({
+        status: "cancelled",
+        cancelledAt: new Date(),
+        cancelledBy: actor.id,
+        cancellationNote: decision.noteRequired ? note : null,
+      })
+      .where(and(eq(leaveApplications.id, application.id), eq(leaveApplications.status, application.status)))
+      .returning({ id: leaveApplications.id });
+    if (updated.length === 0) {
+      return fail(409, "This request has just changed. Please refresh the page and try again.");
+    }
+
+    if (application.status === "approved" && policy) {
+      const dates = await tx
+        .select({ date: leaveApplicationDays.date })
+        .from(leaveApplicationDays)
+        .where(eq(leaveApplicationDays.applicationId, application.id));
+      await applyCarryForwardCorrection(tx, {
+        employee: { id: application.employeeId, joinDate: application.joinDate },
+        policy,
+        dates: dates.map((d) => d.date),
+        event: "cancellation",
+        actorId: actor.id,
+      });
+    }
+    return { ok: true };
+  });
 }

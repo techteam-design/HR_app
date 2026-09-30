@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   check,
+  index,
   integer,
   pgTable,
   text,
@@ -10,32 +11,109 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { timestamps } from "./columns";
-import { employees } from "./employees";
-import { approvalActionEnum, approvalModeEnum } from "./enums";
+import { branches, employees } from "./employees";
+import { approvalActionEnum, approvalModeEnum, approvalReassignmentCauseEnum } from "./enums";
 import { leaveApplications } from "./leave";
 
-// One row per employee. level2ApproverId is required when mode is two_level;
-// that rule is enforced in Zod validation.
-export const approvalWorkflows = pgTable("approval_workflows", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  employeeId: uuid("employee_id")
-    .notNull()
-    .unique()
-    .references(() => employees.id, { onDelete: "restrict" }),
-  mode: approvalModeEnum("mode").notNull(),
-  level1ApproverId: uuid("level1_approver_id")
-    .notNull()
-    .references(() => employees.id, { onDelete: "restrict" }),
-  level2ApproverId: uuid("level2_approver_id").references(() => employees.id, {
-    onDelete: "restrict",
-  }),
-  updatedBy: uuid("updated_by").references(() => employees.id, {
-    onDelete: "restrict",
-  }),
-  ...timestamps,
-});
+// Approval routes are resolved in this order (src/lib/approvals):
+//   per-employee override > managers' rule > branch default > no route.
+// Admins take no leave and need no route. Approvers must be active managers
+// or admins; that rule needs other rows, so it lives in Zod and the services.
 
-// Append-only audit trail of approval decisions.
+// Company-wide approval settings: exactly one row (id = 1).
+export const approvalSettings = pgTable(
+  "approval_settings",
+  {
+    id: integer("id").primaryKey().default(1),
+    // Approves every manager's leave (single level). Must be an active admin.
+    // Null: fall back to the only active admin, if there is exactly one.
+    managersApproverId: uuid("managers_approver_id").references(() => employees.id, {
+      onDelete: "restrict",
+    }),
+    updatedBy: uuid("updated_by").references(() => employees.id, {
+      onDelete: "restrict",
+    }),
+    ...timestamps,
+  },
+  (table) => [check("approval_settings_single_row_check", sql`${table.id} = 1`)],
+);
+
+// Default route for employees and HR viewers of a branch. No row: the branch
+// has no default.
+export const branchApprovalRoutes = pgTable(
+  "branch_approval_routes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    branchId: uuid("branch_id")
+      .notNull()
+      .unique()
+      .references(() => branches.id, { onDelete: "restrict" }),
+    mode: approvalModeEnum("mode").notNull(),
+    level1ApproverId: uuid("level1_approver_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "restrict" }),
+    level2ApproverId: uuid("level2_approver_id").references(() => employees.id, {
+      onDelete: "restrict",
+    }),
+    updatedBy: uuid("updated_by").references(() => employees.id, {
+      onDelete: "restrict",
+    }),
+    ...timestamps,
+  },
+  (table) => [
+    check(
+      "branch_approval_routes_mode_check",
+      sql`(${table.mode} = 'single' AND ${table.level2ApproverId} IS NULL) OR (${table.mode} = 'two_level' AND ${table.level2ApproverId} IS NOT NULL)`,
+    ),
+    check(
+      "branch_approval_routes_distinct_approvers_check",
+      sql`${table.level2ApproverId} IS NULL OR ${table.level2ApproverId} <> ${table.level1ApproverId}`,
+    ),
+  ],
+);
+
+// Per-employee route that replaces the managers' rule and the branch default.
+// "Reset to default" deletes the row.
+export const approvalRouteOverrides = pgTable(
+  "approval_route_overrides",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    employeeId: uuid("employee_id")
+      .notNull()
+      .unique()
+      .references(() => employees.id, { onDelete: "restrict" }),
+    mode: approvalModeEnum("mode").notNull(),
+    level1ApproverId: uuid("level1_approver_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "restrict" }),
+    level2ApproverId: uuid("level2_approver_id").references(() => employees.id, {
+      onDelete: "restrict",
+    }),
+    updatedBy: uuid("updated_by").references(() => employees.id, {
+      onDelete: "restrict",
+    }),
+    ...timestamps,
+  },
+  (table) => [
+    check(
+      "approval_route_overrides_mode_check",
+      sql`(${table.mode} = 'single' AND ${table.level2ApproverId} IS NULL) OR (${table.mode} = 'two_level' AND ${table.level2ApproverId} IS NOT NULL)`,
+    ),
+    check(
+      "approval_route_overrides_distinct_approvers_check",
+      sql`${table.level2ApproverId} IS NULL OR ${table.level2ApproverId} <> ${table.level1ApproverId}`,
+    ),
+    // Nobody approves their own leave.
+    check(
+      "approval_route_overrides_not_own_approver_check",
+      sql`${table.employeeId} <> ${table.level1ApproverId} AND (${table.level2ApproverId} IS NULL OR ${table.employeeId} <> ${table.level2ApproverId})`,
+    ),
+  ],
+);
+
+// Append-only audit trail of approval decisions. approver_id is who actually
+// acted: an admin deciding in place of the assigned approver is recorded as
+// the admin.
 export const approvalActions = pgTable(
   "approval_actions",
   {
@@ -61,6 +139,48 @@ export const approvalActions = pgTable(
       table.applicationId,
       table.level,
     ),
+    // "Decided by me", newest first.
+    index("approval_actions_approver_id_acted_at_idx").on(table.approverId, table.actedAt),
     check("approval_actions_level_check", sql`${table.level} IN (1, 2)`),
+    check(
+      "approval_actions_reject_remarks_check",
+      sql`${table.action} <> 'rejected' OR length(btrim(coalesce(${table.remarks}, ''))) > 0`,
+    ),
+  ],
+);
+
+// Append-only record of a pending application moving to a different approver
+// at a level not yet decided (route change). A null approver means the level
+// was added (from) or removed (to), e.g. when the mode changes.
+export const approvalReassignments = pgTable(
+  "approval_reassignments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    applicationId: uuid("application_id")
+      .notNull()
+      .references(() => leaveApplications.id, { onDelete: "cascade" }),
+    level: integer("level").notNull(),
+    fromApproverId: uuid("from_approver_id").references(() => employees.id, {
+      onDelete: "restrict",
+    }),
+    toApproverId: uuid("to_approver_id").references(() => employees.id, {
+      onDelete: "restrict",
+    }),
+    cause: approvalReassignmentCauseEnum("cause").notNull(),
+    // The admin whose change caused the move.
+    changedBy: uuid("changed_by")
+      .notNull()
+      .references(() => employees.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("approval_reassignments_application_id_idx").on(table.applicationId),
+    check("approval_reassignments_level_check", sql`${table.level} IN (1, 2)`),
+    check(
+      "approval_reassignments_changed_check",
+      sql`${table.fromApproverId} IS DISTINCT FROM ${table.toApproverId}`,
+    ),
   ],
 );

@@ -177,8 +177,9 @@ export const leaveApplications = pgTable(
     reason: text("reason"),
     status: leaveApplicationStatusEnum("status").notNull().default("pending"),
     currentLevel: integer("current_level").notNull().default(1),
-    // Approval route is snapshotted at submission so later config changes
-    // do not affect in-flight requests.
+    // Approval route snapshotted at submission: the CURRENT approver for each
+    // level. A route change moves only levels not yet decided (recorded in
+    // approval_reassignments); decided levels keep their approver.
     approvalMode: approvalModeEnum("approval_mode").notNull(),
     level1ApproverId: uuid("level1_approver_id")
       .notNull()
@@ -244,6 +245,17 @@ export const leaveApplications = pgTable(
     check(
       "leave_applications_half_day_check",
       sql`(${table.isHalfDay} AND ${table.halfDaySlot} IS NOT NULL AND ${table.startDate} = ${table.endDate} AND ${table.totalDays} = 0.5) OR (NOT ${table.isHalfDay} AND ${table.halfDaySlot} IS NULL)`,
+    ),
+    // Single level: no level 2 approver and never at level 2. Two-level: a
+    // level 2 approver. Level 1 and level 2 may be the same person after a
+    // reassignment (the new route's approver takes the remaining level).
+    check(
+      "leave_applications_approval_mode_check",
+      sql`(${table.approvalMode} = 'single' AND ${table.level2ApproverId} IS NULL AND ${table.currentLevel} = 1) OR (${table.approvalMode} = 'two_level' AND ${table.level2ApproverId} IS NOT NULL)`,
+    ),
+    check(
+      "leave_applications_not_own_approver_check",
+      sql`${table.employeeId} <> ${table.level1ApproverId} AND (${table.level2ApproverId} IS NULL OR ${table.employeeId} <> ${table.level2ApproverId})`,
     ),
     check(
       "leave_applications_cancelled_at_check",

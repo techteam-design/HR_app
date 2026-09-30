@@ -80,6 +80,27 @@ describe("POST /api/leave/applications (own)", () => {
   });
 });
 
+describe("admins take no leave", () => {
+  it("an admin cannot apply for their own leave (apply_leave is refused)", async () => {
+    auth.requireApiEmployee.mockResolvedValueOnce(denied(403));
+    const response = await ownRoute.POST(post("http://app/api/leave/applications", BODY));
+    expect(auth.requireApiEmployee).toHaveBeenCalledWith("apply_leave");
+    expect(response.status).toBe(403);
+    expect(service.submitApplication).not.toHaveBeenCalled();
+  });
+
+  it("returns the service's refusal when the on-behalf target is an admin", async () => {
+    auth.requireApiEmployee.mockResolvedValueOnce(signedIn(MARIA, "admin"));
+    service.submitApplication.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      error: "Admins don't take leave in this system.",
+    } as never);
+    const response = await onBehalfRoute.POST(post("http://app/x", BODY), params(MARIA));
+    expect(response.status).toBe(409);
+  });
+});
+
 describe("GET /api/leave/applications (own)", () => {
   it("lists the session employee's requests with valid filters only", async () => {
     await ownRoute.GET(new Request(`http://app/api/leave/applications?type=mc&status=bogus&year=2026&employeeId=${KELVIN}`));
@@ -89,16 +110,25 @@ describe("GET /api/leave/applications (own)", () => {
 });
 
 describe("POST /api/leave/applications/[id]/cancel", () => {
-  it("requires a session and passes the session employee as the actor", async () => {
+  it("needs only a session (the service decides per request) and passes the session employee as the actor", async () => {
     const response = await cancelRoute.POST(post("http://app/x", { note: " Duplicate " }), params(APPLICATION));
-    expect(auth.requireApiEmployee).toHaveBeenCalledWith("apply_leave");
+    // No apply_leave: admins take no leave but cancel staff leave, and so do approvers.
+    expect(auth.requireApiEmployee).toHaveBeenCalledWith();
     expect(response.status).toBe(200);
-    expect(service.cancelApplication).toHaveBeenCalledWith(
-      { id: MARIA, role: "employee" },
-      APPLICATION,
-      { note: "Duplicate" },
-      expect.any(String),
-    );
+    expect(service.cancelApplication).toHaveBeenCalledWith({ id: MARIA, role: "employee" }, APPLICATION, {
+      note: "Duplicate",
+    });
+  });
+
+  it("returns the service's refusal of staff cancelling approved leave", async () => {
+    service.cancelApplication.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      error: "Approved leave can't be cancelled by you. Please ask your approver or HR to cancel it.",
+    } as never);
+    const response = await cancelRoute.POST(post("http://app/x", {}), params(APPLICATION));
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toContain("Approved leave");
   });
 
   it("returns the service refusal", async () => {

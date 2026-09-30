@@ -92,6 +92,8 @@ export function EmployeeForm(props: Props) {
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
+  // Extra lines under the form error, e.g. whom an approver still approves.
+  const [formDetails, setFormDetails] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
   const [created, setCreated] = useState<Created | null>(null);
   const [classification, setClassification] = useState(initial?.classification ?? "");
@@ -110,6 +112,7 @@ export function EmployeeForm(props: Props) {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError(null);
+    setFormDetails([]);
 
     const form = new FormData(event.currentTarget);
     const text = (name: string) => String(form.get(name) ?? "");
@@ -161,11 +164,13 @@ export function EmployeeForm(props: Props) {
         temporaryPassword?: string | null;
         error?: string;
         fieldErrors?: Record<string, string>;
+        details?: string[];
       } | null;
 
       if (!response.ok || !body) {
         setErrors(body?.fieldErrors ?? {});
         setFormError(body?.error ?? "Could not save. Please try again.");
+        setFormDetails(body?.details ?? []);
         setPending(false);
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
@@ -232,7 +237,20 @@ export function EmployeeForm(props: Props) {
 
   return (
     <form key={formKey} onSubmit={handleSubmit} noValidate className="space-y-6">
-      {formError && <Alert>{formError}</Alert>}
+      {formError && (
+        <Alert>
+          {formError}
+          {formDetails.length > 0 && (
+            <span className="mt-1 block font-normal">
+              {formDetails.map((line) => (
+                <span key={line} className="block">
+                  {line}
+                </span>
+              ))}
+            </span>
+          )}
+        </Alert>
+      )}
 
       <Section title="Personal">
         <Field name="fullName" label="Full name" error={errors.fullName}>
