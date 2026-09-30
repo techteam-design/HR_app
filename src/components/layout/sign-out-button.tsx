@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { LogOutIcon } from "@/components/ui/icons";
@@ -8,14 +7,13 @@ import { signOut } from "@/lib/auth/auth-client";
 import { cn } from "@/lib/utils/cn";
 
 export function SignOutButton({ className }: { className?: string }) {
-  const router = useRouter();
   const [pending, setPending] = useState(false);
 
   async function handleClick() {
     setPending(true);
     await signOut();
-    router.replace("/login");
-    router.refresh();
+    // One full page load: clears every cached page of the signed-in user.
+    window.location.replace("/login");
   }
 
   return (

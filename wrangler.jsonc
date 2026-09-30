@@ -21,6 +21,8 @@
   // Served at https://hr-app-staging.<account-subdomain>.workers.dev
   "workers_dev": true,
   "preview_urls": false,
+  // Run the Worker next to the Neon database (AWS ap-southeast-1, Singapore).
+  "placement": { "region": "aws:ap-southeast-1" },
   "observability": {
     "enabled": true,
     "logs": {

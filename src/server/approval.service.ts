@@ -12,9 +12,16 @@ import type { DecisionInput, QueueView } from "@/validations/approval";
 
 import { waitingForCondition } from "./approval-route.service";
 import { withPhotoUrls } from "./employee-photo.service";
-import { ensureEntitlements } from "./entitlement.service";
+import { databaseEntitlementStore, ensureEntitlements, ensureEntitlementsWith } from "./entitlement.service";
 import { queryApplications, type ApplicationItem } from "./leave-application.service";
-import { applyCarryForwardCorrection, bookedOn, periodBalance, runLocked } from "./leave-period.service";
+import {
+  applyCarryForwardCorrection,
+  bookedOn,
+  periodBalance,
+  periodBalances,
+  runLocked,
+  type BalanceRequest,
+} from "./leave-period.service";
 import { loadLeavePolicies, type LeavePolicy } from "./leave-policy.service";
 import { fail, UUID, type ServiceResult } from "./service-result";
 
@@ -98,33 +105,38 @@ export async function listQueue(actor: Actor, view: QueueView, today: IsoDate): 
   }
   if (items.length === 0) return [];
 
+  // The number of queries stays the same however long the queue is: the
+  // entitlement check and the balances are read for all requests at once.
   const employeeIds = [...new Set(items.map((item) => item.employeeId))];
-  const people = await withPhotoUrls(
-    await getDb()
+  const [rows, policies] = await Promise.all([
+    getDb()
       .select({
         id: employees.id,
         fullName: employees.fullName,
         joinDate: employees.joinDate,
+        classification: employees.classification,
+        status: employees.status,
         photoKey: employees.photoKey,
         branchName: branches.name,
       })
       .from(employees)
       .innerJoin(branches, eq(branches.id, employees.branchId))
       .where(inArray(employees.id, employeeIds)),
-  );
+    loadLeavePolicies(),
+  ]);
+  const people = await withPhotoUrls(rows);
   const byId = new Map(people.map((p) => [p.id, p]));
 
-  const policies = await loadLeavePolicies();
   const pending = items.filter((item) => item.status === "pending");
   // Current-period rows may not exist yet (e.g. a new leave year started).
-  await Promise.all(
-    [...new Set(pending.map((item) => item.employeeId))].map((id) => ensureEntitlements(id, today, policies)),
+  const pendingIds = new Set(pending.map((item) => item.employeeId));
+  await ensureEntitlementsWith(
+    databaseEntitlementStore,
+    policies,
+    people.filter((person) => pendingIds.has(person.id)),
+    today,
   );
-  const balances = new Map(
-    await Promise.all(
-      pending.map(async (item) => [item.id, await queueBalance(item, byId.get(item.employeeId)!, policies, today)] as const),
-    ),
-  );
+  const balances = await queueBalances(pending, byId, policies, today);
 
   return items.map((item) => {
     const person = byId.get(item.employeeId)!;
@@ -152,23 +164,35 @@ function decisionApplication(item: ApplicationItem): DecisionApplication {
   };
 }
 
-async function queueBalance(
-  item: ApplicationItem,
-  person: { id: string; joinDate: IsoDate },
+// The balance of the period each pending request's dates fall in (approved
+// days only; the request itself excluded), after this request.
+async function queueBalances(
+  pending: ApplicationItem[],
+  people: Map<string, { id: string; joinDate: IsoDate }>,
   policies: LeavePolicy[],
   today: IsoDate,
-): Promise<QueueItem["balance"]> {
-  const policy = policies.find((p) => p.code === item.code);
-  const periods = periodsOf(item.code, person.joinDate, item.days.map((d) => d.date));
-  if (!policy || periods.length !== 1) return null;
-  const balance = await periodBalance(getDb(), {
-    employee: person,
-    policy,
-    period: periods[0],
-    today,
-    excludeApplicationId: item.id,
-  });
-  return balance ? { available: balance.available, after: balance.available - item.totalDays } : null;
+): Promise<Map<string, QueueItem["balance"]>> {
+  const requests: BalanceRequest[] = [];
+  for (const item of pending) {
+    const person = people.get(item.employeeId)!;
+    const policy = policies.find((p) => p.code === item.code);
+    const periods = periodsOf(item.code, person.joinDate, item.days.map((d) => d.date));
+    if (!policy || periods.length !== 1) continue;
+    requests.push({
+      key: item.id,
+      employee: { id: person.id, joinDate: person.joinDate },
+      policy,
+      period: periods[0],
+      excludeApplicationId: item.id,
+    });
+  }
+  const found = await periodBalances(requests, today);
+  return new Map(
+    pending.map((item) => {
+      const balance = found.get(item.id);
+      return [item.id, balance ? { available: balance.available, after: balance.available - item.totalDays } : null];
+    }),
+  );
 }
 
 // ---------------------------------------------------------------------------

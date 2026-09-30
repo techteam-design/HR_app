@@ -299,8 +299,10 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   migration. The service check already enforces this.
 - Last-admin race: the admin guard reads the list of active admins and then writes separately. Two
   simultaneous demotions could leave no active admin. Unlikely at this size; fix with a transaction or lock.
-- Enable Smart Placement (wrangler.jsonc "placement": { "mode": "smart" }) for production, so the Worker
-  runs near the Neon Singapore database.
+- Worker placement: REPLACED the earlier "enable Smart Placement" to-do with an explicit region hint,
+  done on staging (see "Performance (end of Sprint 3A)"). Production's wrangler config must carry the
+  same line: "placement": { "region": "aws:ap-southeast-1" }.
+- Remove the temporary PERF_TIMING timing log before production (see "Deployment").
 - Deploy production from GitHub Actions on Linux rather than from a Windows machine.
 - Dev seed dates drift: seed-dev.ts computes join dates from the day it runs, and re-runs leave existing
   rows unchanged. Run npm run db:reset:dev to refresh the scenarios (see "Dev data").
@@ -357,6 +359,19 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   request); no Hyperdrive or extra binding is used.
 - After migrations 0002/0003 (approval_workflows dropped), older Worker builds fail on leave submission:
   redeploy staging whenever the dev database is migrated.
+- Placement: wrangler.jsonc has "placement": { "region": "aws:ap-southeast-1" }, so the Worker runs next
+  to the Neon database (AWS Singapore) instead of near the user. Chosen over Smart Placement, which
+  needs steady traffic to engage (low on staging) and leaves 1% of requests unplaced. Check it with the
+  cf-placement response header ("remote-…" = placed). Placement only affects fetch requests, not the
+  cron. Use the same line for production.
+- Temporary timing log (PERF_TIMING, remove before production): src/db/perf-timing.ts plus hooks marked
+  "PERF_TIMING" in src/db/index.ts, src/db/transaction.ts and custom-worker.ts. Off unless PERF_TIMING=1.
+  It times every Neon round trip (HTTP queries/batches and the WebSocket transaction; SQL text only,
+  never parameter values) and logs one JSON line per request ("event":"perf_timing", with path, kind,
+  status, db count/waitMs and the ordered queries) plus a Server-Timing header. Staging: `npx wrangler
+  secret put PERF_TIMING` (value 1), watch with `npx wrangler tail hr-app-staging`, turn off with
+  `npx wrangler secret delete PERF_TIMING`. Local: PERF_TIMING=1 in .env.local and restart npm run dev
+  (lines in the dev terminal with the route name; no header, status or total time locally).
 
 ## Project status and history
 ### Sprint 1 (complete)
@@ -500,6 +515,35 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   approvers and the admin always see "Cancel leave" (note required), including the admin cancelling a
   pending request.
 
+### Performance (end of Sprint 3A)
+- Cause: every database call is a separate HTTPS round trip to Neon in Singapore, and the Worker ran
+  near the user (India/Brunei), about 165 ms per query, with most queries awaited one after another.
+- Decision: pin the Worker next to the database with an explicit placement region hint
+  ("placement": { "region": "aws:ap-southeast-1" }, see "Deployment"), not Smart Placement.
+- Measured on staging with PERF_TIMING, before -> after placement:
+  - Neon query: ~165 ms -> 7–10 ms
+  - Employee dashboard: 1.3–2.3 s -> 63–90 ms
+  - /leave/apply: 2.1 s -> 66 ms
+  - Sign-in: 1.4 s -> 35 ms
+  - Sign-out: 2.1 s -> 72 ms
+- Also fixed:
+  - /approvals: the entitlement check runs once for everyone in the queue
+    (ensureEntitlementsWith), and all balances come from one db.batch (periodBalances in
+    leave-period.service.ts, same rules as periodBalance). The query count no longer grows with the
+    queue (it was 17 queries for 2 pending requests); tests/approvals/queue-queries.test.ts.
+  - Sign-in and sign-out do one full page load (window.location.replace) instead of router.replace +
+    router.refresh, which rendered the dashboard twice.
+- Deferred optional fixes (Sprint 4 polish; measure with PERF_TIMING first):
+  - Better Auth session cookie cache (removes the session and user lookups on most requests; revoked
+    sessions stay valid on other devices for up to the cache time).
+  - Balance chain from 5 sequential queries to 3: return the rows from ensureEntitlements, sum the
+    carry-forward recalculations in usageFor, pass the employee in, load policies in parallel or cached.
+  - Add joinDate and branchId to the session employee columns (drops findEntitlementEmployee and the
+    team calendar's own-branch lookup).
+  - Small items: team-calendar request details in one batch; approval setup 3 calls -> 1; employee
+    page queries in parallel; fewer statements inside the submit lock; a limit on the overview's
+    pending list.
+
 ### Open items carried forward from Sprint 3A
 - Sprint 3B scope:
   - Resend email notifications (submit, approve, reject, level 2 handoff) and the pending-approval
@@ -510,6 +554,7 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   - DNS move of hr.sbcwellness.com to Cloudflare.
 - Mobile polish: to review later.
 - Carry-forward dev scenario before UAT (Sprint 4); see "Internal to-dos".
+- Performance polish (Sprint 4): the deferred optional fixes in "Performance (end of Sprint 3A)".
 - Redeploy staging after the Sprint 3A commit (the dev database no longer has approval_workflows).
 
 ### Dev data

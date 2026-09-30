@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { Alert } from "@/components/ui/alert";
@@ -12,7 +11,6 @@ import { loginSchema } from "@/validations/auth";
 const GENERIC_ERROR = "Invalid email or password";
 
 export function LoginForm() {
-  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -42,9 +40,10 @@ export function LoginForm() {
       return;
     }
 
+    // One full page load (a single server render; no stale client cache).
     // The dashboard layout sends users who must change their password onward.
-    router.replace("/dashboard");
-    router.refresh();
+    // The button stays "pending" until the page changes.
+    window.location.replace("/dashboard");
   }
 
   return (

@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { drizzle, type NeonDatabase } from "drizzle-orm/neon-serverless";
 
 import type { Database } from "./index";
+import { instrumentPool } from "./perf-timing";
 import * as schema from "./schema";
 
 // Interactive transactions for balance-affecting writes only: submitting
@@ -35,6 +36,7 @@ export async function withEmployeeLock<T>(employeeId: string, work: (tx: Tx) => 
   if (!connectionString) throw new Error("DATABASE_URL is not set.");
 
   const pool = new Pool({ connectionString, max: 1 });
+  instrumentPool(pool); // PERF_TIMING (temporary): no-op unless PERF_TIMING=1
   try {
     const db = drizzle({ client: pool, schema });
     return await db.transaction(async (tx) => {

@@ -1,5 +1,6 @@
 import { and, eq, gte, inArray, lte, ne, sql, type SQL } from "drizzle-orm";
 
+import { getDb } from "@/db";
 import { leaveAdjustments, leaveApplicationDays, leaveApplications, leaveEntitlements } from "@/db/schema";
 import { isLockTimeout, withEmployeeLock, type Reader, type Tx } from "@/db/transaction";
 import { computeCarryForward } from "@/lib/leave-engine/carry-forward";
@@ -7,7 +8,13 @@ import { carryForwardCorrection, carryForwardCorrectionNote } from "@/lib/leave-
 import { previousPeriodFor } from "@/lib/leave-engine/entitlement-plan";
 import type { IsoDate } from "@/lib/leave-engine/iso-date";
 import { nextPeriodStart, type LeavePeriod } from "@/lib/leave-engine/leave-year";
-import { baseEntitlement, periodOf, periodRelation, type PeriodBalance } from "@/lib/leave-engine/request-period";
+import {
+  baseEntitlement,
+  periodOf,
+  periodRelation,
+  type PeriodBalance,
+  type PeriodRelation,
+} from "@/lib/leave-engine/request-period";
 import { formatDateRange } from "@/lib/utils/dates";
 
 import type { LeavePolicy } from "./leave-policy.service";
@@ -140,8 +147,30 @@ export async function periodBalance(
   const relation = periodRelation(policy.code, employee.joinDate, today, period);
   if (!relation || relation === "beyond") return null;
   const usage = await periodUsage(reader, employee.id, policy.leaveTypeId, period, excludeApplicationId);
+  if (relation === "next") return toPeriodBalance({ employee, policy, period, usage, row: null });
 
-  if (relation === "next") {
+  const row = await findPeriodRow(reader, employee.id, policy.leaveTypeId, period.start);
+  if (!row) return null;
+  const adjustments = await rowAdjustments(reader, row.id);
+  return toPeriodBalance({ employee, policy, period, usage, row: { ...row, adjustments: adjustments.total } });
+}
+
+// The balance from the reads above. `row` null = the next period (projected
+// from its base entitlement; carry-forward and adjustments ignored).
+function toPeriodBalance({
+  employee,
+  policy,
+  period,
+  usage,
+  row,
+}: {
+  employee: { joinDate: IsoDate };
+  policy: LeavePolicy;
+  period: LeavePeriod;
+  usage: { approved: number; pending: number };
+  row: (PeriodRow & { adjustments: number }) | null;
+}): PeriodBalance {
+  if (!row) {
     const available = baseEntitlement(policy, employee.joinDate, period) - usage.approved;
     return {
       periodStart: period.start,
@@ -152,11 +181,7 @@ export async function periodBalance(
       availableAfterPending: available - usage.pending,
     };
   }
-
-  const row = await findPeriodRow(reader, employee.id, policy.leaveTypeId, period.start);
-  if (!row) return null;
-  const adjustments = await rowAdjustments(reader, row.id);
-  const available = row.entitledDays + row.carriedForwardDays + adjustments.total - usage.approved;
+  const available = row.entitledDays + row.carriedForwardDays + row.adjustments - usage.approved;
   return {
     periodStart: row.periodStart,
     periodEnd: row.periodEnd,
@@ -165,6 +190,120 @@ export async function periodBalance(
     pending: usage.pending,
     availableAfterPending: available - usage.pending,
   };
+}
+
+export type BalanceRequest = {
+  // Returned map key (e.g. the application id).
+  key: string;
+  employee: { id: string; joinDate: IsoDate };
+  policy: LeavePolicy;
+  period: LeavePeriod;
+  excludeApplicationId?: string;
+};
+
+// periodBalance() for many requests at once (the approver queue), on getDb():
+// the same rules, but the reads for ALL requests go in one db.batch (their
+// days, and the stored rows with their adjustment totals), so the number of
+// queries does not grow with the queue. Null where there is no balance.
+export async function periodBalances(
+  requests: readonly BalanceRequest[],
+  today: IsoDate,
+): Promise<Map<string, PeriodBalance | null>> {
+  const result = new Map<string, PeriodBalance | null>();
+  const active: (BalanceRequest & { relation: Exclude<PeriodRelation, "beyond"> })[] = [];
+  for (const request of requests) {
+    const relation = periodRelation(request.policy.code, request.employee.joinDate, today, request.period);
+    if (!relation || relation === "beyond") result.set(request.key, null);
+    else active.push({ ...request, relation });
+  }
+  if (active.length === 0) return result;
+
+  const unique = <T,>(values: T[]) => [...new Set(values)];
+  const employeeIds = unique(active.map((r) => r.employee.id));
+  const leaveTypeIds = unique(active.map((r) => r.policy.leaveTypeId));
+  const from = active.map((r) => r.period.start).sort()[0];
+  const to = active.map((r) => r.period.end).sort().at(-1)!;
+  const storedStarts = unique(active.filter((r) => r.relation !== "next").map((r) => r.period.start));
+
+  const db = getDb();
+  const daysQuery = db
+    .select({
+      applicationId: leaveApplications.id,
+      employeeId: leaveApplications.employeeId,
+      leaveTypeId: leaveApplications.leaveTypeId,
+      status: leaveApplications.status,
+      date: leaveApplicationDays.date,
+      portion: leaveApplicationDays.portion,
+    })
+    .from(leaveApplicationDays)
+    .innerJoin(leaveApplications, eq(leaveApplications.id, leaveApplicationDays.applicationId))
+    .where(
+      and(
+        inArray(leaveApplications.employeeId, employeeIds),
+        inArray(leaveApplications.leaveTypeId, leaveTypeIds),
+        inArray(leaveApplications.status, ["approved", "pending"]),
+        gte(leaveApplicationDays.date, from),
+        lte(leaveApplicationDays.date, to),
+      ),
+    );
+  const rowsQuery = db
+    .select({
+      id: leaveEntitlements.id,
+      employeeId: leaveEntitlements.employeeId,
+      leaveTypeId: leaveEntitlements.leaveTypeId,
+      periodStart: leaveEntitlements.periodStart,
+      periodEnd: leaveEntitlements.periodEnd,
+      entitledDays: leaveEntitlements.entitledDays,
+      carriedForwardDays: leaveEntitlements.carriedForwardDays,
+      adjustments: dayTotal(leaveAdjustments.days),
+    })
+    .from(leaveEntitlements)
+    .leftJoin(leaveAdjustments, eq(leaveAdjustments.entitlementId, leaveEntitlements.id))
+    .where(
+      and(
+        inArray(leaveEntitlements.employeeId, employeeIds),
+        inArray(leaveEntitlements.leaveTypeId, leaveTypeIds),
+        inArray(leaveEntitlements.periodStart, storedStarts),
+      ),
+    )
+    .groupBy(leaveEntitlements.id);
+  const [days, rows] = storedStarts.length > 0 ? await db.batch([daysQuery, rowsQuery]) : [await daysQuery, []];
+
+  for (const request of active) {
+    const usage = { approved: 0, pending: 0 };
+    for (const day of days) {
+      if (
+        day.employeeId === request.employee.id &&
+        day.leaveTypeId === request.policy.leaveTypeId &&
+        day.applicationId !== request.excludeApplicationId &&
+        day.date >= request.period.start &&
+        day.date <= request.period.end
+      ) {
+        usage[day.status === "approved" ? "approved" : "pending"] += Number(day.portion);
+      }
+    }
+    if (request.relation === "next") {
+      result.set(request.key, toPeriodBalance({ ...request, usage, row: null }));
+      continue;
+    }
+    const row = rows.find(
+      (r) =>
+        r.employeeId === request.employee.id &&
+        r.leaveTypeId === request.policy.leaveTypeId &&
+        r.periodStart === request.period.start,
+    );
+    result.set(
+      request.key,
+      row
+        ? toPeriodBalance({
+            ...request,
+            usage,
+            row: { ...row, entitledDays: Number(row.entitledDays), carriedForwardDays: Number(row.carriedForwardDays) },
+          })
+        : null,
+    );
+  }
+  return result;
 }
 
 // The employee's own pending and approved dates among `dates` (any leave
