@@ -63,6 +63,8 @@ vi.mock("@/server/entitlement.service", () => ({
   databaseEntitlementStore: {},
 }));
 vi.mock("@/server/employee-photo.service", () => ({ withPhotoUrls: vi.fn() }));
+const notifyAfterCommit = vi.hoisted(() => vi.fn());
+vi.mock("@/server/notification.service", () => ({ notifyAfterCommit }));
 vi.mock("@/server/leave-application.service", () => ({ queryApplications: vi.fn() }));
 vi.mock("@/server/approval-route.service", () => ({ waitingForCondition: vi.fn() }));
 vi.mock("@/server/leave-policy.service", () => ({
@@ -108,6 +110,7 @@ beforeEach(() => {
   period.bookedOn.mockReset().mockResolvedValue([]);
   period.applyCarryForwardCorrection.mockReset().mockResolvedValue(0);
   ensureEntitlements.mockReset();
+  notifyAfterCommit.mockReset();
 });
 
 describe("overrideApplication(): Revoke approval", () => {
@@ -135,6 +138,8 @@ describe("overrideApplication(): Revoke approval", () => {
     );
     // Revoking only gives days back: no balance check.
     expect(period.periodBalance).not.toHaveBeenCalled();
+    // The employee is emailed after the commit.
+    expect(notifyAfterCommit).toHaveBeenCalledWith({ kind: "revoked", applicationId: APP_ID });
   });
 
   it("refuses anything but approved leave", async () => {
@@ -165,6 +170,7 @@ describe("overrideApplication(): Approve anyway", () => {
       toStatus: "approved",
     });
     expect(period.applyCarryForwardCorrection).toHaveBeenCalledWith(tx, expect.objectContaining({ event: "approval" }));
+    expect(notifyAfterCommit).toHaveBeenCalledWith({ kind: "approved_anyway", applicationId: APP_ID });
   });
 
   it("is blocked when the balance no longer fits", async () => {
@@ -176,6 +182,8 @@ describe("overrideApplication(): Approve anyway", () => {
     expect(result.ok ? "" : result.error).toContain("Adjust the balance first, or leave it rejected.");
     expect(state.sets).toEqual([]);
     expect(state.inserts).toEqual([]);
+    // Nothing changed, so nobody is emailed.
+    expect(notifyAfterCommit).not.toHaveBeenCalled();
   });
 
   it("is blocked when other leave now covers the dates", async () => {

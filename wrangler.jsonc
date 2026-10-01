@@ -31,11 +31,12 @@
       "invocation_logs": true
     }
   },
-  // Daily entitlement job at 16:05 UTC = 00:05 Asia/Brunei (no daylight
-  // saving). Handled by scheduled() in custom-worker.ts, which calls
-  // /api/cron/entitlements with CRON_SECRET (a Worker secret).
+  // Daily jobs (Asia/Brunei has no daylight saving), handled by scheduled()
+  // in custom-worker.ts, which calls the route with CRON_SECRET (a Worker secret):
+  //   16:05 UTC = 00:05 Brunei: /api/cron/entitlements
+  //   01:00 UTC = 09:00 Brunei: /api/cron/reminders (approver reminders)
   "triggers": {
-    "crons": ["5 16 * * *"]
+    "crons": ["5 16 * * *", "0 1 * * *"]
   }
   // No R2 binding: photos use the S3 API with keys (src/lib/storage/r2.ts).
   // No images binding: next/image runs unoptimized (next.config.ts).

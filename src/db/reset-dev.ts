@@ -35,6 +35,7 @@ import {
   branchApprovalRoutes,
   branches,
   departments,
+  emailLog,
   employees,
   halfDaySettings,
   leaveAdjustments,
@@ -73,6 +74,7 @@ async function confirm(host: string): Promise<boolean> {
 async function deleteAllData(): Promise<void> {
   const db = getDb();
   await db.batch([
+    db.delete(emailLog),
     db.delete(approvalReassignments),
     db.delete(approvalOverrides),
     db.delete(approvalActions),

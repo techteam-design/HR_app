@@ -16,6 +16,11 @@ const service = vi.hoisted(() => ({
 }));
 vi.mock("@/server/entitlement.service", () => service);
 
+const reminderService = vi.hoisted(() => ({
+  sendApprovalReminders: vi.fn(async () => ({ afterDays: 2, approvers: 2, requests: 3, sent: 2, failed: 0, skipped: 0, duplicate: 0 })),
+}));
+vi.mock("@/server/reminder.service", () => reminderService);
+
 const { GET, POST } = await import("@/app/api/cron/entitlements/route");
 
 const SECRET = "test-cron-secret-0123456789abcdef";
@@ -77,5 +82,51 @@ describe("constantTimeEqual()", () => {
   it("never authorises with a short or missing secret", () => {
     expect(isCronAuthorized("Bearer short", "short")).toBe(false);
     expect(isCronAuthorized(null, SECRET)).toBe(false);
+  });
+});
+
+describe("/api/cron/reminders", () => {
+  it("needs the cron secret and runs the reminder job for today in Brunei (POST and GET)", async () => {
+    const reminders = await import("@/app/api/cron/reminders/route");
+    expect((await reminders.POST(new Request("http://app/api/cron/reminders", { method: "POST" }))).status).toBe(401);
+    expect(reminderService.sendApprovalReminders).not.toHaveBeenCalled();
+
+    const authorised = (method: string) =>
+      new Request("http://app/api/cron/reminders", { method, headers: { authorization: `Bearer ${SECRET}` } });
+    const response = await reminders.POST(authorised("POST"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ sent: 2 });
+    expect(reminderService.sendApprovalReminders).toHaveBeenCalledWith(expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), null);
+    expect((await reminders.GET(authorised("GET"))).status).toBe(200);
+  });
+
+  describe("?minDays= (testing override)", () => {
+    const withMinDays = (value: string, authorization = `Bearer ${SECRET}`) =>
+      new Request(`http://app/api/cron/reminders?minDays=${value}`, { method: "POST", headers: { authorization } });
+
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("outside production, passes the override to the job", async () => {
+      vi.stubEnv("APP_ENV", "");
+      const reminders = await import("@/app/api/cron/reminders/route");
+      expect((await reminders.POST(withMinDays("0"))).status).toBe(200);
+      expect(reminderService.sendApprovalReminders).toHaveBeenCalledWith(expect.any(String), 0);
+    });
+
+    it("still needs the cron secret", async () => {
+      vi.stubEnv("APP_ENV", "");
+      const reminders = await import("@/app/api/cron/reminders/route");
+      expect((await reminders.POST(withMinDays("0", "Bearer wrong"))).status).toBe(401);
+      expect(reminderService.sendApprovalReminders).not.toHaveBeenCalled();
+    });
+
+    it("is refused in production and for invalid values, without running the job", async () => {
+      const reminders = await import("@/app/api/cron/reminders/route");
+      vi.stubEnv("APP_ENV", "production");
+      expect((await reminders.POST(withMinDays("0"))).status).toBe(400);
+      vi.stubEnv("APP_ENV", "staging");
+      expect((await reminders.POST(withMinDays("31"))).status).toBe(400);
+      expect(reminderService.sendApprovalReminders).not.toHaveBeenCalled();
+    });
   });
 });

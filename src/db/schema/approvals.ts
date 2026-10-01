@@ -36,12 +36,21 @@ export const approvalSettings = pgTable(
     managersApproverId: uuid("managers_approver_id").references(() => employees.id, {
       onDelete: "restrict",
     }),
+    // Daily reminder to approvers about requests waiting at least this many
+    // days at their current level. 0 = no reminders.
+    reminderAfterDays: integer("reminder_after_days").notNull().default(2),
     updatedBy: uuid("updated_by").references(() => employees.id, {
       onDelete: "restrict",
     }),
     ...timestamps,
   },
-  (table) => [check("approval_settings_single_row_check", sql`${table.id} = 1`)],
+  (table) => [
+    check("approval_settings_single_row_check", sql`${table.id} = 1`),
+    check(
+      "approval_settings_reminder_after_days_check",
+      sql`${table.reminderAfterDays} BETWEEN 0 AND 30`,
+    ),
+  ],
 );
 
 // Default route for employees and HR viewers of a branch. No row: the branch

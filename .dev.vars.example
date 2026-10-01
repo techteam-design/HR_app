@@ -23,5 +23,16 @@ R2_BUCKET=
 # Shared secret for the cron routes (/api/cron/*): requests must send
 # "Authorization: Bearer <CRON_SECRET>". At least 32 random characters
 # (anything under 16 is always rejected). The scheduled() handler in
-# custom-worker.ts sends it for the daily entitlement job.
+# custom-worker.ts sends it for the daily entitlement and reminder jobs.
 CRON_SECRET=
+
+# Email (Resend). See .env.example for details.
+# APP_ENV: "production" on the production Worker only; leave unset on staging/preview.
+APP_ENV=
+# "true" to send. Unset = no emails.
+EMAIL_ENABLED=
+RESEND_API_KEY=
+# SBC HR <hr@notify.sbcwellness.com>
+EMAIL_FROM=
+# Required outside production: the one inbox that receives every email.
+EMAIL_DEV_REDIRECT=

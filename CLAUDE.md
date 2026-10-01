@@ -12,7 +12,7 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 - Neon PostgreSQL (Singapore region) via Drizzle ORM + @neondatabase/serverless
 - Better Auth: email + password login only
 - Cloudflare R2 for employee photos (S3-compatible SDK)
-- Resend for transactional email (not Gmail)
+- Resend for transactional email (not Gmail), called with plain fetch (no resend SDK, no React Email)
 - Zod for all input validation
 - Vitest for unit tests
 - Deployed to Cloudflare via @opennextjs/cloudflare
@@ -303,6 +303,67 @@ Pure functions in src/lib/leave-engine/, tested in tests/leave-engine/. Dates ar
   (approved, rejected, overrides in the range; "waiting now" is today's count), filters (approver,
   action, branch, employee, dates), 20 per page. One db.batch; filtered and paged in memory.
 
+## Email notifications (as implemented, Sprint 3B part 2)
+- Resend over plain fetch (src/lib/email/resend.ts; no SDK, no React Email). Sending domain
+  notify.sbcwellness.com (Resend region Tokyo). Idempotency-Key = the email's dedupe key.
+- Environment variables (Worker secrets on staging/production, .env.local locally; names in
+  .env.example and .dev.vars.example):
+  - EMAIL_ENABLED: exactly "true" to send. Anything else: nothing is sent (logged as skipped).
+  - RESEND_API_KEY: the Resend API key.
+  - EMAIL_FROM: "SBC HR <hr@notify.sbcwellness.com>".
+  - EMAIL_DEV_REDIRECT: REQUIRED outside production. Every email goes to this one real inbox, with
+    "Intended for: Name <address>" at the top and "[DEV] " before the subject. Test addresses
+    (.test, .example, example.com...) are refused as the redirect.
+  - APP_ENV: "production" ONLY on the production Worker. Unset or anything else = non-production
+    (redirect required, or nothing is sent). In production without a redirect, real recipients get
+    the email, but test addresses are still never sent to. A redirect set in production still
+    redirects ("[REDIRECTED] ").
+  - Links use BETTER_AUTH_URL (appUrl()); no separate APP_URL.
+- Rules: src/lib/email/config.ts (emailConfig, resolveDelivery); every send goes through deliver() in
+  src/server/notification.service.ts: skip (inactive, no email, off, misconfigured) -> claim the
+  email_log row (INSERT ... ON CONFLICT (dedupe_key) DO NOTHING, status pending) -> send -> sent/failed.
+  No automatic retry; failures are in email_log and the Worker logs ("event":"email").
+- Never inside withEmployeeLock or a batch: services call notifyAfterCommit() after the write has
+  committed; it runs after the response via Next after() (OpenNext -> ctx.waitUntil). An email
+  problem never fails or rolls back the user's action.
+- email_log (migration 0005): event, dedupe_key (UNIQUE), application_id, recipient_id,
+  intended_email, delivered_to, subject, status (pending/sent/failed/skipped), provider_message_id,
+  error, sent_at. Keys: "{event}:{applicationId}:{recipientId}" (one-off events),
+  "request_reassigned:{reassignmentId}", "approval_reminder:{approverId}:{bruneiDate}" (test runs
+  add ":min{N}"),
+  "test_email:{adminId}:{timestamp}".
+- Who gets what (notify() in notification.service.ts; hooks in the services):
+  - Approvers: new request (own or on behalf; submitApplication) -> level 1 approver; level 1
+    approved on two levels (decideApplication) -> level 2 approver; reassigned by a route change
+    (approval-route.service saves, employee update) -> the new current-level approver; daily reminder.
+  - Employee: level 1 approved (waiting for level 2); final approval (decideApplication) and "Approve
+    anyway" with the reason (overrideApplication); rejected with remarks; approved leave cancelled by
+    an approver or the admin, or a pending request cancelled by the admin, with the note
+    (cancelApplication); approval revoked with the reason; request submitted on their behalf.
+  - Not sent: staff cancelling their own pending request; nothing to the original approver on an
+    override; the admin is not copied (client question pending: add a recipient in notify()).
+- Templates: src/lib/email/templates/ (layout.ts renders HTML + plain text, every value escaped;
+  leave.ts says what each email contains; theme.ts holds the email colours). Text wordmark, lavender
+  accents, one button (approvers -> /approvals, employees -> /leave/history). Never a balance. Half
+  days show the stored times.
+- Reminders: approval_settings.reminder_after_days (default 2, 0 = off, max 30), on the Approval setup
+  page ("Email reminders" card; hr_viewer read-only). Cron "0 1 * * *" = 09:00 Brunei ->
+  /api/cron/reminders (GET/POST, Bearer CRON_SECRET). One digest per approver per day listing every
+  request waiting at least N Brunei days at its current level (since submission, the level 1
+  approval at level 2, or the latest reassignment at that level, which restarts the clock); sets
+  leave_applications.last_reminder_sent_at. Rules: src/lib/approvals/reminders.ts; job:
+  src/server/reminder.service.ts. The setting 0 means OFF (reminderThreshold), never "remind now".
+- Testing only: /api/cron/reminders?minDays=N (0–30) replaces the setting for that run (0 includes
+  requests submitted today, even when reminders are off). Needs the CRON_SECRET header and is refused
+  (400) when APP_ENV=production. Test runs use the key "approval_reminder:{approverId}:{date}:min{N}",
+  so they never use up the real 09:00 digest and repeat runs with the same N are duplicates.
+- "Send test email" (Approval setup, admin only; POST /api/email/test): one sample email to the
+  signed-in admin through the full path; the page shows sent (and to which address), skipped (why)
+  or failed.
+- Staging secrets: EMAIL_ENABLED=true, RESEND_API_KEY, EMAIL_FROM, EMAIL_DEV_REDIRECT=<a real inbox>;
+  do NOT set APP_ENV. Production: APP_ENV=production, EMAIL_ENABLED=true, RESEND_API_KEY, EMAIL_FROM,
+  no EMAIL_DEV_REDIRECT (unless redirecting on purpose for UAT).
+
 ## Concurrency (as implemented, Sprint 3A)
 - Balance-affecting writes (submit, apply on behalf, final approval, cancel, adjustments, overrides) run in
   withEmployeeLock (src/db/transaction.ts): the Neon WebSocket driver (Pool with max 1, created and
@@ -357,6 +418,9 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   done on staging (see "Performance (end of Sprint 3A)"). Production's wrangler config must carry the
   same line: "placement": { "region": "aws:ap-southeast-1" }.
 - Remove the temporary PERF_TIMING timing log before production (see "Deployment").
+- Production email: set APP_ENV=production and the email secrets on the production Worker (see
+  "Email notifications"); confirm on staging that emails sent after the response (Next after() ->
+  ctx.waitUntil) arrive.
 - Deploy production from GitHub Actions on Linux rather than from a Windows machine.
 - Dev seed dates drift: seed-dev.ts computes join dates from the day it runs, and re-runs leave existing
   rows unchanged. Run npm run db:reset:dev to refresh the scenarios (see "Dev data").
@@ -381,6 +445,8 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 
 ## Design system ("D · Lavender silk")
 - Rule: use tokens and src/components/ui components; never hardcode colours (no hex/rgb in components).
+  The ONLY exception: src/lib/email/templates/theme.ts (email clients can't use CSS tokens), which
+  holds literal copies of the tokens. Change both together.
 - All tokens live in ONE place: the @theme block in src/app/globals.css. Change brand colours there only.
 - Fonts (next/font, self-hosted, set up in src/app/layout.tsx): Playfair Display 500/600 + italic
   (font-display: titles) and Montserrat 400/500/600 (font-sans: body and UI).
@@ -404,9 +470,11 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   and scripts/cf-strip-env.mjs removes them. The Worker must only see variables set on Cloudflare.
 - Runtime variables (names in .dev.vars.example) are Worker secrets; none go in wrangler.jsonc.
 - The Worker entry is custom-worker.ts (wrangler "main"). It re-exports OpenNext's fetch handler from
-  .open-next/worker.js and adds scheduled() for the cron trigger "5 16 * * *" (00:05 Brunei). The
-  scheduled run calls /api/cron/entitlements in-process with CRON_SECRET, so every Worker environment
-  needs the CRON_SECRET secret or the daily job fails (visible under the Worker's cron events).
+  .open-next/worker.js and adds scheduled() for two cron triggers: "5 16 * * *" (00:05 Brunei,
+  /api/cron/entitlements) and "0 1 * * *" (09:00 Brunei, /api/cron/reminders). Each calls its route
+  in-process with CRON_SECRET, so every Worker environment needs the CRON_SECRET secret or the jobs
+  fail (visible under the Worker's cron events).
+- Email secrets per environment: see "Email notifications" (APP_ENV=production on production only).
 - src/proxy.ts runs as Node.js middleware, which OpenNext supports only experimentally.
 - TODO before production: remove the sign-in timing log in src/app/api/auth/[...all]/route.ts.
 - The balance-affecting writes open a WebSocket to Neon per request (Pool created and closed in the
@@ -453,7 +521,7 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   seed-dev.ts (dev data only, needs ALLOW_DEV_SEED=true; see "Dev data").
 - Tests: tests/{auth,employees,org,validations,utils}.
 - Still placeholders after Sprint 1: leave, approvals, reports and team calendar pages;
-  /api/cron/reminders (returns 501).
+  /api/cron/reminders (returned 501 until Sprint 3B part 2).
 
 ### Sprint 2A (complete)
 - Leave engine: src/lib/leave-engine/ (iso-date, leave-year, entitlement, eligibility, carry-forward,
@@ -613,16 +681,20 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   cases in half-day, progress, activity, cancellation, carry-forward-correction, final-approval,
   validations and rbac tests.
 
-### Sprint 3B part 2 (next)
-- Resend email notifications: submit, approve, reject, level 2 handoff, AND overrides (tell the
-  employee when an approval is revoked or a rejection is overridden, with the reason).
-- Pending-approval reminder cron (/api/cron/reminders, still 501; needs a second cron trigger in
-  custom-worker.ts and wrangler.jsonc). The resend package is not installed yet, and the email
-  templates are empty .tsx files (React Email is not an approved package).
-- The notice card; DNS move of hr.sbcwellness.com to Cloudflare.
+### Sprint 3B part 2 (code complete, awaiting migration 0005 and manual testing)
+- Email notifications, approver reminders (second cron trigger), the reminder setting and "Send test
+  email": see "Email notifications". Migration 0005 (drizzle/0005_email_notifications.sql): email_log
+  (+ enums email_event, email_status), approval_settings.reminder_after_days.
+- The empty React Email .tsx templates were deleted; templates are plain TypeScript strings.
+- Dev data: db:reset:dev also clears email_log.
+- Tests: tests/email (config, templates, delivery), tests/approvals/reminders.test.ts, the reminders
+  cron route, and the override emails in override-service.test.ts.
+- Still open in Sprint 3B: the notice card; DNS move of hr.sbcwellness.com to Cloudflare; Resend
+  domain verification for notify.sbcwellness.com (in progress); whether the admin is copied on
+  requests (client question).
 
 ### Open items carried forward from Sprint 3A
-- Sprint 3B scope: part 1 done (see above); part 2 = emails, reminders, notice card, DNS.
+- Sprint 3B scope: parts 1 and 2 code complete (see above); still open: notice card, DNS.
 - Mobile polish: to review later.
 - Carry-forward dev scenario before UAT (Sprint 4); see "Internal to-dos".
 - Performance polish (Sprint 4): the deferred optional fixes in "Performance (end of Sprint 3A)".
@@ -634,7 +706,7 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   prints the database host and asks you to type RESET DEV. Deletes all app data and all Better Auth
   users/sessions/accounts (schema kept), then runs db:seed (MC rounds up), db:seed:admin, db:seed:dev
   and db:entitlements. Running it twice gives the same result. It also clears approval_overrides and
-  the half-day timings (db:seed re-inserts the defaults).
+  the half-day timings (db:seed re-inserts the defaults), and email_log.
 - The team (seed-dev.ts, join dates relative to today in Brunei; logins use SEED_DEV_PASSWORD at
   @example.test, except the admin, who uses SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD):
   - Admin (seed-admin login): the ONLY admin; Branch A, Management. Takes no leave.
@@ -689,8 +761,9 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
   re-check, new cancellation rules, team calendar, admin/HR overview, the concurrency fix.
 - Sprint 3B part 1 (code complete): demo cleanup, admin-editable half-day timings, All decisions tab
   with Revoke approval / Approve anyway.
-- Sprint 3B part 2 (next): notifications via Resend (including reminders, /api/cron/reminders, and
-  override emails), the notice card, and the DNS move to Cloudflare.
+- Sprint 3B part 2 (code complete): email notifications via Resend, approver reminders
+  (/api/cron/reminders), override emails, "Send test email".
+- Sprint 3B remainder (next): the notice card and the DNS move to Cloudflare.
 - Sprint 4: reports and Excel exports on /reports (leave trends by department, headcount, balances,
   leave records; no calendar report, the Team calendar covers it; revoked requests reported
   separately from cancellations), production go-live.

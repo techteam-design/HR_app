@@ -31,6 +31,7 @@ import {
   type BalanceRequest,
 } from "./leave-period.service";
 import { loadLeavePolicies, type LeavePolicy } from "./leave-policy.service";
+import { notifyAfterCommit } from "./notification.service";
 import { fail, UUID, type ServiceResult } from "./service-result";
 
 // The approver queue and decisions. Rules live in src/lib/approvals/decision.ts
@@ -289,6 +290,10 @@ export async function decideApplication(
       FROM moved
       RETURNING application_id`);
     if (result.rows.length === 0) return fail(409, MOVED_ON);
+    notifyAfterCommit({
+      kind: next.status === "pending" ? "level1_approved" : "rejected",
+      applicationId: application.id,
+    });
     return { ok: true, status: next.status, currentLevel: next.currentLevel };
   }
 
@@ -299,7 +304,7 @@ export async function decideApplication(
   await ensureEntitlements(application.employeeId, today, policies);
   const employee = { id: application.employeeId, joinDate: application.joinDate };
 
-  return runLocked(application.employeeId, async (tx) => {
+  const result = await runLocked(application.employeeId, async (tx): Promise<ServiceResult<Decided>> => {
     const dates = (
       await tx
         .select({ date: leaveApplicationDays.date })
@@ -344,6 +349,8 @@ export async function decideApplication(
     await applyCarryForwardCorrection(tx, { employee, policy, dates, event: "approval", actorId: actor.id });
     return { ok: true, status: "approved", currentLevel: next.currentLevel };
   });
+  if (result.ok) notifyAfterCommit({ kind: "approved", applicationId: application.id });
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -392,7 +399,7 @@ export async function overrideApplication(
   const { kind, from } = decision;
   const to = decision.to as "approved" | "revoked";
 
-  return runLocked(application.employeeId, async (tx) => {
+  const result = await runLocked(application.employeeId, async (tx): Promise<ServiceResult<{ status: "approved" | "revoked" }>> => {
     const dates = (
       await tx
         .select({ date: leaveApplicationDays.date })
@@ -442,4 +449,6 @@ export async function overrideApplication(
     });
     return { ok: true, status: to };
   });
+  if (result.ok) notifyAfterCommit({ kind: approving ? "approved_anyway" : "revoked", applicationId: application.id });
+  return result;
 }

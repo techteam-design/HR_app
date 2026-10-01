@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { MIN_OVERRIDE_REASON_LENGTH, OVERRIDE_ACTIONS } from "@/lib/approvals/override";
+import { MAX_REMINDER_AFTER_DAYS } from "@/lib/approvals/reminders";
 import { parseIsoDate, toIsoDate } from "@/lib/leave-engine/iso-date";
 
 // Shared by the approval API routes (server) and the forms (client). The
@@ -41,6 +42,17 @@ export type RouteInput = z.infer<typeof routeSchema>;
 
 export const managersApproverSchema = z.object({
   managersApproverId: optionalUuid("Choose an active admin"),
+});
+
+// Approver reminders: remind after this many days waiting; 0 = off.
+export { MAX_REMINDER_AFTER_DAYS };
+
+export const reminderSettingSchema = z.object({
+  reminderAfterDays: z.coerce
+    .number({ error: "Enter a number of days" })
+    .int("Enter whole days")
+    .min(0, "Enter 0 (off) or more")
+    .max(MAX_REMINDER_AFTER_DAYS, `At most ${MAX_REMINDER_AFTER_DAYS} days`),
 });
 
 export const MAX_BULK_EMPLOYEES = 200;

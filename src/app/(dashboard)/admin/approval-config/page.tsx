@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { BranchDefaults } from "@/components/approvals/branch-defaults";
+import { EmailSettingsCard } from "@/components/approvals/email-settings-card";
 import { EmployeeRoutes } from "@/components/approvals/employee-routes";
 import { ManagersApproverCard } from "@/components/approvals/managers-approver-card";
 import { Alert } from "@/components/ui/alert";
@@ -12,10 +13,12 @@ import { Select } from "@/components/ui/select";
 import { can } from "@/lib/auth/rbac";
 import { getApprovalSetup } from "@/server/approval-route.service";
 import { requireEmployee } from "@/server/auth.service";
+import { reminderAfterDays } from "@/server/reminder.service";
 import { setupFilterSchema } from "@/validations/approval";
 
 // Approval setup: the managers' leave approver, branch default routes and
-// every employee's resolved route (admins excluded, they take no leave).
+// every employee's resolved route (admins excluded, they take no leave),
+// and the approver reminder setting with the admin's "Send test email".
 // Admins edit; HR viewers see the same page read-only.
 export default async function ApprovalConfigPage({
   searchParams,
@@ -25,11 +28,14 @@ export default async function ApprovalConfigPage({
   const viewer = await requireEmployee({ action: "view_all_records" });
   const canEdit = can(viewer.role, "manage_approval_config");
   const filter = setupFilterSchema.parse(await searchParams);
-  const setup = await getApprovalSetup({
-    departmentId: filter.departmentId,
-    branchId: filter.branchId,
-    problemsOnly: filter.problems,
-  });
+  const [setup, reminderDays] = await Promise.all([
+    getApprovalSetup({
+      departmentId: filter.departmentId,
+      branchId: filter.branchId,
+      problemsOnly: filter.problems,
+    }),
+    reminderAfterDays(),
+  ]);
   const filtered = !!(filter.departmentId || filter.branchId || filter.problems);
 
   return (
@@ -51,6 +57,8 @@ export default async function ApprovalConfigPage({
       />
 
       <BranchDefaults branches={setup.branches} approverOptions={setup.approverOptions} canEdit={canEdit} />
+
+      <EmailSettingsCard reminderAfterDays={reminderDays} canEdit={canEdit} />
 
       <section aria-labelledby="employee-routes-title" className="space-y-4">
         <div>

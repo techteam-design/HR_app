@@ -84,3 +84,21 @@ export const approvalOverrideKindEnum = pgEnum("approval_override_kind", [
   // rejected -> approved ("Approve anyway")
   "rejection_overridden",
 ]);
+
+// Emails the app sends (email_log.event).
+export const emailEventEnum = pgEnum("email_event", [
+  "request_submitted",
+  "request_submitted_on_behalf",
+  "level2_pending",
+  "level1_approved",
+  "request_approved",
+  "request_rejected",
+  "leave_cancelled",
+  "approval_revoked",
+  "request_reassigned",
+  "approval_reminder",
+  // Admin's "Send test email" on the Approval setup page.
+  "test_email",
+]);
+
+export const emailStatusEnum = pgEnum("email_status", ["pending", "sent", "failed", "skipped"]);

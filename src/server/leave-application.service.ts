@@ -41,6 +41,7 @@ import { loadHalfDayTimings } from "./half-day-timing.service";
 import { getEmployeeBalances } from "./leave-balance.service";
 import { applyCarryForwardCorrection, bookedOn, periodBalance, runLocked } from "./leave-period.service";
 import { loadLeavePolicies, type LeavePolicy } from "./leave-policy.service";
+import { notifyAfterCommit } from "./notification.service";
 import { fail, UUID, type ServiceResult } from "./service-result";
 
 // Leave applications: submit (own or by an admin on someone's behalf), list,
@@ -294,7 +295,7 @@ export async function submitApplication(
   const total = totalDays(days);
   const employee = context.employee;
 
-  return runLocked(employee.id, async (tx) => {
+  const result = await runLocked(employee.id, async (tx): Promise<ServiceResult<Submitted>> => {
     // Authoritative re-check inside the lock: another request may have been
     // submitted or approved since the checks above.
     const fresh = periods.length === 1 ? await periodBalance(tx, { employee, policy, period: periods[0], today }) : null;
@@ -339,6 +340,9 @@ export async function submitApplication(
       .values(days.map((day) => ({ applicationId: id, date: day.date, portion: day.portion.toFixed(1) })));
     return { ok: true, id, status: "pending", totalDays: total, approvers: route.approvers };
   });
+  // Emails go out after the commit and never affect the result.
+  if (result.ok) notifyAfterCommit({ kind: "submitted", applicationId: id, onBehalf: options.onBehalf });
+  return result;
 }
 
 async function pastPeriodBalance(
@@ -607,7 +611,7 @@ export async function cancelApplication(
 
   const policy = (await loadLeavePolicies()).find((p) => p.leaveTypeId === application.leaveTypeId);
 
-  return runLocked(application.employeeId, async (tx) => {
+  const result = await runLocked(application.employeeId, async (tx): Promise<ServiceResult> => {
     // Conditional update: nothing changes if the status moved on meanwhile.
     const updated = await tx
       .update(leaveApplications)
@@ -638,4 +642,10 @@ export async function cancelApplication(
     }
     return { ok: true };
   });
+  // Staff cancelling their own pending request get no email; anyone else's
+  // cancellation is emailed to the employee.
+  if (result.ok && decision.as !== "owner") {
+    notifyAfterCommit({ kind: "cancelled", applicationId: application.id, wasApproved: application.status === "approved" });
+  }
+  return result;
 }

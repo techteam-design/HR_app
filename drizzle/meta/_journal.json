@@ -36,6 +36,13 @@
       "when": 1790840696082,
       "tag": "0004_half_day_times_overrides",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790849299636,
+      "tag": "0005_email_notifications",
+      "breakpoints": true
     }
   ]
 }

@@ -36,6 +36,7 @@ import {
   generateBetterAuthId,
   hashLoginPassword,
 } from "./login-account.service";
+import { notifyAfterCommit, reassignmentWindowStart } from "./notification.service";
 import { fail, UUID, type ServiceError, type ServiceResult } from "./service-result";
 
 // ---------------------------------------------------------------------------
@@ -536,6 +537,7 @@ export async function updateEmployee(
   // A new branch or role can change the employee's approval route (and a
   // role change to or from admin the managers' approver): their pending
   // requests move to the new route in the same transaction.
+  let moves = 0;
   if (routeContext) {
     const after = withChange(routeContext, {
       kind: "employee",
@@ -546,9 +548,12 @@ export async function updateEmployee(
     });
     const adminsChanged = routeContext.managersApprover?.id !== after.managersApprover?.id;
     const affected = [id, ...(adminsChanged ? managerIds(after).filter((m) => m !== id) : [])];
-    statements.push(...(await reassignmentStatements(after, affected, "employee_change", actor.id)));
+    const moved = await reassignmentStatements(after, affected, "employee_change", actor.id);
+    moves = moved.length;
+    statements.push(...moved);
   }
 
+  const since = reassignmentWindowStart();
   try {
     await runBatch(statements);
   } catch (error) {
@@ -560,6 +565,8 @@ export async function updateEmployee(
     }
     throw error;
   }
+  // After the commit: email the new approvers of moved requests.
+  if (moves > 0) notifyAfterCommit({ kind: "reassigned", actorId: actor.id, since });
   return { ok: true, id };
 }
 

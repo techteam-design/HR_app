@@ -26,6 +26,7 @@ import {
 } from "@/lib/approvals/route-resolution";
 import type { RouteInput } from "@/validations/approval";
 
+import { notifyAfterCommit, reassignmentWindowStart } from "./notification.service";
 import { fail, UUID, type ServiceResult } from "./service-result";
 
 // Approval routes: loading the resolver's inputs, saving branch defaults,
@@ -305,6 +306,14 @@ async function runBatch(statements: Statement[]): Promise<void> {
   await getDb().batch(statements as [Statement, ...Statement[]]);
 }
 
+// Runs the change and its reassignments in one batch, then (after the
+// commit, after the response) emails the new approvers of moved requests.
+async function runBatchAndNotify(actorId: string, change: Statement[], moves: Statement[]): Promise<void> {
+  const since = reassignmentWindowStart();
+  await runBatch([...change, ...moves]);
+  if (moves.length > 0) notifyAfterCommit({ kind: "reassigned", actorId, since });
+}
+
 // ---------------------------------------------------------------------------
 // Saving routes (admin only; checked by the API routes)
 // ---------------------------------------------------------------------------
@@ -338,16 +347,19 @@ export async function saveManagersApprover(
   }
   const after = withChange(context, { kind: "managers_approver", approverId });
   const db = getDb();
-  await runBatch([
-    db
-      .insert(approvalSettings)
-      .values({ id: 1, managersApproverId: approverId, updatedBy: actor.id })
-      .onConflictDoUpdate({
-        target: approvalSettings.id,
-        set: { managersApproverId: approverId, updatedBy: actor.id, updatedAt: new Date() },
-      }),
-    ...(await reassignmentStatements(after, managers(context), "manager_approver", actor.id)),
-  ]);
+  await runBatchAndNotify(
+    actor.id,
+    [
+      db
+        .insert(approvalSettings)
+        .values({ id: 1, managersApproverId: approverId, updatedBy: actor.id })
+        .onConflictDoUpdate({
+          target: approvalSettings.id,
+          set: { managersApproverId: approverId, updatedBy: actor.id, updatedAt: new Date() },
+        }),
+    ],
+    await reassignmentStatements(after, managers(context), "manager_approver", actor.id),
+  );
   return { ok: true };
 }
 
@@ -366,16 +378,19 @@ export async function saveBranchDefault(
 
   const after = withChange(context, { kind: "branch_default", branchId, route });
   const db = getDb();
-  await runBatch([
-    db
-      .insert(branchApprovalRoutes)
-      .values({ branchId, ...route, updatedBy: actor.id })
-      .onConflictDoUpdate({
-        target: branchApprovalRoutes.branchId,
-        set: { ...route, updatedBy: actor.id, updatedAt: new Date() },
-      }),
-    ...(await reassignmentStatements(after, branchMembers(context, branchId), "branch_default", actor.id)),
-  ]);
+  await runBatchAndNotify(
+    actor.id,
+    [
+      db
+        .insert(branchApprovalRoutes)
+        .values({ branchId, ...route, updatedBy: actor.id })
+        .onConflictDoUpdate({
+          target: branchApprovalRoutes.branchId,
+          set: { ...route, updatedBy: actor.id, updatedAt: new Date() },
+        }),
+    ],
+    await reassignmentStatements(after, branchMembers(context, branchId), "branch_default", actor.id),
+  );
   return { ok: true };
 }
 
@@ -413,8 +428,9 @@ export async function saveOverrides(
 
   const after = withChange(context, { kind: "override", employeeIds, route });
   const db = getDb();
-  await runBatch([
-    ...employeeIds.map((employeeId) =>
+  await runBatchAndNotify(
+    actor.id,
+    employeeIds.map((employeeId) =>
       db
         .insert(approvalRouteOverrides)
         .values({ employeeId, ...route, updatedBy: actor.id })
@@ -423,8 +439,8 @@ export async function saveOverrides(
           set: { ...route, updatedBy: actor.id, updatedAt: new Date() },
         }),
     ),
-    ...(await reassignmentStatements(after, employeeIds, "override", actor.id)),
-  ]);
+    await reassignmentStatements(after, employeeIds, "override", actor.id),
+  );
   return { ok: true, updated: employeeIds.length };
 }
 
@@ -439,10 +455,11 @@ export async function resetOverrides(
 
   const after = withChange(context, { kind: "override", employeeIds: withOverride, route: null });
   const db = getDb();
-  await runBatch([
-    db.delete(approvalRouteOverrides).where(inArray(approvalRouteOverrides.employeeId, withOverride)),
-    ...(await reassignmentStatements(after, withOverride, "override_reset", actor.id)),
-  ]);
+  await runBatchAndNotify(
+    actor.id,
+    [db.delete(approvalRouteOverrides).where(inArray(approvalRouteOverrides.employeeId, withOverride))],
+    await reassignmentStatements(after, withOverride, "override_reset", actor.id),
+  );
   return { ok: true, updated: withOverride.length };
 }
 
