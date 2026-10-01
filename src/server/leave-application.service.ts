@@ -2,13 +2,20 @@ import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 import { getDb } from "@/db";
-import { approvalActions, employees, leaveApplicationDays, leaveApplications, leaveTypes } from "@/db/schema";
+import {
+  approvalActions,
+  approvalOverrides,
+  employees,
+  leaveApplicationDays,
+  leaveApplications,
+  leaveTypes,
+} from "@/db/schema";
 import { approvalProgress, type Progress } from "@/lib/approvals/progress";
 import { can, type Role } from "@/lib/auth/rbac";
 import { cancelDecision, type ApplicationStatus } from "@/lib/leave-engine/cancellation";
 import type { Classification, LeaveTypeCode } from "@/lib/leave-engine/constants";
 import { sumDaysInPeriod, totalDays, type SelectedDay } from "@/lib/leave-engine/day-selection";
-import type { HalfDaySlot } from "@/lib/leave-engine/half-day";
+import { halfDaySlotsFor, toClock, type HalfDaySlot, type HalfDaySlotOption } from "@/lib/leave-engine/half-day";
 import { addDays, type IsoDate } from "@/lib/leave-engine/iso-date";
 import {
   baseEntitlement,
@@ -30,6 +37,7 @@ import {
 
 import { approvalRouteFor, type Approver } from "./approval-route.service";
 import { databaseEntitlementStore } from "./entitlement.service";
+import { loadHalfDayTimings } from "./half-day-timing.service";
 import { getEmployeeBalances } from "./leave-balance.service";
 import { applyCarryForwardCorrection, bookedOn, periodBalance, runLocked } from "./leave-period.service";
 import { loadLeavePolicies, type LeavePolicy } from "./leave-policy.service";
@@ -119,6 +127,8 @@ export type ApplyContext = {
   };
   approvalRoute: ApprovalRoute | null;
   types: ApplyLeaveType[];
+  // The configured half-day slots for the employee's classification.
+  halfDaySlots: HalfDaySlotOption[];
   // Own pending/approved dates from BOOKED_LOOKBACK_DAYS ago onward, with
   // the portion booked on each.
   bookedDays: { date: IsoDate; portion: number }[];
@@ -131,7 +141,7 @@ async function loadContext(
 ): Promise<(ApplyContext & { booked: BookedDay[]; policies: LeavePolicy[] }) | null> {
   if (!UUID.test(employeeId)) return null;
   const policies = await loadLeavePolicies();
-  const [balances, person, approvalRoute, booked] = await Promise.all([
+  const [balances, person, approvalRoute, booked, halfDay] = await Promise.all([
     getEmployeeBalances(employeeId, today, policies),
     getDb()
       .select({ fullName: employees.fullName, role: employees.role })
@@ -140,6 +150,7 @@ async function loadContext(
       .limit(1),
     findApprovalRoute(employeeId),
     findBookedDays(employeeId, bookedFrom),
+    loadHalfDayTimings(),
   ]);
   if (!balances || !person[0]) return null;
 
@@ -187,6 +198,7 @@ async function loadContext(
     },
     approvalRoute,
     types,
+    halfDaySlots: halfDaySlotsFor(halfDay.timings[balances.classification]),
     bookedDays: bookedByDate(booked),
     booked,
     policies,
@@ -197,8 +209,8 @@ async function loadContext(
 export async function getApplyContext(employeeId: string, today: IsoDate): Promise<ApplyContext | null> {
   const context = await loadContext(employeeId, today, addDays(today, -BOOKED_LOOKBACK_DAYS));
   if (!context) return null;
-  const { today: onDate, employee, approvalRoute, types, bookedDays } = context;
-  return { today: onDate, employee, approvalRoute, types, bookedDays };
+  const { today: onDate, employee, approvalRoute, types, halfDaySlots, bookedDays } = context;
+  return { today: onDate, employee, approvalRoute, types, halfDaySlots, bookedDays };
 }
 
 // ---------------------------------------------------------------------------
@@ -293,6 +305,13 @@ export async function submitApplication(
     });
     if (freshIssues.length > 0) return refused(freshIssues);
 
+    // A half day stores the slot's times as configured now, so later timing
+    // changes never rewrite it.
+    const slotTimes =
+      halfDay && input.halfDaySlot
+        ? (await loadHalfDayTimings(tx)).timings[employee.classification][input.halfDaySlot]
+        : null;
+
     await tx.insert(leaveApplications).values({
       id,
       employeeId: employee.id,
@@ -301,6 +320,8 @@ export async function submitApplication(
       endDate: dates[dates.length - 1],
       isHalfDay: halfDay,
       halfDaySlot: halfDay ? input.halfDaySlot : null,
+      halfDayStart: slotTimes?.start ?? null,
+      halfDayEnd: slotTimes?.end ?? null,
       totalDays: String(total),
       reason: input.reason,
       status: "pending",
@@ -356,6 +377,9 @@ export type ApplicationItem = {
   endDate: IsoDate;
   isHalfDay: boolean;
   halfDaySlot: HalfDaySlot | null;
+  // The slot's times when it was booked ("HH:MM"); null for full days.
+  halfDayStart: string | null;
+  halfDayEnd: string | null;
   totalDays: number;
   reason: string | null;
   status: ApplicationStatus;
@@ -364,7 +388,8 @@ export type ApplicationItem = {
   submittedAt: Date;
   // The approver assigned to each level.
   approvers: Approver[];
-  // "Approved by X (level 1), waiting for Y", with each decision's remarks.
+  // "Approved by X (level 1), waiting for Y", with each decision's remarks
+  // and any admin override ("Approval revoked by Z") with its reason.
   progress: Progress;
   // Set when an admin applied on the employee's behalf.
   submittedByName: string | null;
@@ -391,6 +416,8 @@ export async function queryApplications(where: SQL | undefined, order: SQL[], li
       endDate: leaveApplications.endDate,
       isHalfDay: leaveApplications.isHalfDay,
       halfDaySlot: leaveApplications.halfDaySlot,
+      halfDayStart: leaveApplications.halfDayStart,
+      halfDayEnd: leaveApplications.halfDayEnd,
       totalDays: leaveApplications.totalDays,
       reason: leaveApplications.reason,
       status: leaveApplications.status,
@@ -420,7 +447,8 @@ export async function queryApplications(where: SQL | undefined, order: SQL[], li
 
   const ids = rows.map((row) => row.id);
   const actor = alias(employees, "actor");
-  const [dayRows, actionRows] = await db.batch([
+  const admin = alias(employees, "override_admin");
+  const [dayRows, actionRows, overrideRows] = await db.batch([
     db
       .select({
         applicationId: leaveApplicationDays.applicationId,
@@ -442,6 +470,17 @@ export async function queryApplications(where: SQL | undefined, order: SQL[], li
       .from(approvalActions)
       .innerJoin(actor, eq(actor.id, approvalActions.approverId))
       .where(inArray(approvalActions.applicationId, ids)),
+    db
+      .select({
+        applicationId: approvalOverrides.applicationId,
+        kind: approvalOverrides.kind,
+        adminName: admin.fullName,
+        reason: approvalOverrides.reason,
+        actedAt: approvalOverrides.actedAt,
+      })
+      .from(approvalOverrides)
+      .innerJoin(admin, eq(admin.id, approvalOverrides.adminId))
+      .where(inArray(approvalOverrides.applicationId, ids)),
   ]);
 
   return rows.map((row) => {
@@ -456,6 +495,8 @@ export async function queryApplications(where: SQL | undefined, order: SQL[], li
       endDate: row.endDate,
       isHalfDay: row.isHalfDay,
       halfDaySlot: row.halfDaySlot,
+      halfDayStart: row.halfDayStart ? toClock(row.halfDayStart) : null,
+      halfDayEnd: row.halfDayEnd ? toClock(row.halfDayEnd) : null,
       totalDays: Number(row.totalDays),
       reason: row.reason,
       status: row.status,
@@ -466,6 +507,7 @@ export async function queryApplications(where: SQL | undefined, order: SQL[], li
       progress: approvalProgress(
         { status: row.status, approvalMode: row.approvalMode, currentLevel: row.currentLevel, approvers },
         actionRows.filter((action) => action.applicationId === row.id),
+        overrideRows.filter((override) => override.applicationId === row.id),
       ),
       submittedByName: row.submittedByName,
       noticeOverridden: row.noticeOverridden,

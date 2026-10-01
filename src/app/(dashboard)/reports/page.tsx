@@ -7,8 +7,7 @@ export default async function ReportsPage() {
   return (
     <PagePlaceholder
       title="Reports"
-      sprint="Sprint 4"
-      description="Leave balances and usage across the company, with exports."
+      description="Reports and Excel exports (leave trends by department, headcount, balances, leave records) will be available here soon."
     />
   );
 }

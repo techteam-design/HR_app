@@ -1,4 +1,6 @@
+import { OverrideButton } from "@/components/approvals/override-button";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { overrideFor } from "@/lib/approvals/override";
 import { formatDays } from "@/lib/leave-engine/balance";
 import { canEmployeeCancel } from "@/lib/leave-engine/cancellation";
 import { cn } from "@/lib/utils/cn";
@@ -7,13 +9,14 @@ import type { ApplicationItem } from "@/server/leave-application.service";
 
 import { ApprovalProgress } from "./approval-progress";
 import { CancelApplicationButton } from "./cancel-application-button";
-import { approverRoute, daysLabel, HALF_DAY_SLOT_LABELS, LEAVE_LABELS } from "./labels";
+import { approverRoute, daysLabel, halfDaySuffix, LEAVE_LABELS } from "./labels";
 
 // A list of leave requests: on the employee's own history, and (for admins
 // and HR viewers) on the employee detail page. Display only; cancelling is
 // enforced by the server.
 //   own:   the employee may cancel their own PENDING requests
-//   admin: an admin may cancel any pending or approved request, with a note
+//   admin: an admin may cancel any pending or approved request, with a note,
+//          revoke an approval or approve a rejected request anyway
 //   view:  no actions (HR viewer)
 export function ApplicationList({
   items,
@@ -35,6 +38,8 @@ export function ApplicationList({
           mode === "admin"
             ? item.status === "pending" || item.status === "approved"
             : mode === "own" && canEmployeeCancel(item.status);
+        const override = overrideFor(item.status, mode === "admin");
+        const summary = `${LEAVE_LABELS[item.code]}, ${range} (${days})`;
         return (
           <li key={item.id} className="rounded-card border border-border bg-surface p-4 sm:p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -46,7 +51,7 @@ export function ApplicationList({
                 </div>
                 <p className="text-[15px] text-plum-900">
                   {range} · {days}
-                  {item.isHalfDay && item.halfDaySlot && ` (${HALF_DAY_SLOT_LABELS[item.halfDaySlot].toLowerCase()})`}
+                  {halfDaySuffix(item)}
                 </p>
                 <p className="text-[13px] text-muted">
                   Submitted {formatDisplayDate(todayIsoInBrunei(item.submittedAt))}
@@ -63,12 +68,17 @@ export function ApplicationList({
                   </p>
                 )}
               </div>
-              {cancellable && (
-                <CancelApplicationButton
-                  applicationId={item.id}
-                  summary={`${LEAVE_LABELS[item.code]}, ${range} (${days})`}
-                  kind={mode === "admin" ? "leave" : "own_request"}
-                />
+              {(cancellable || override) && (
+                <div className="flex flex-wrap gap-2">
+                  {cancellable && (
+                    <CancelApplicationButton
+                      applicationId={item.id}
+                      summary={summary}
+                      kind={mode === "admin" ? "leave" : "own_request"}
+                    />
+                  )}
+                  {override && <OverrideButton applicationId={item.id} action={override} summary={summary} />}
+                </div>
               )}
             </div>
             <details className="group mt-3">

@@ -1,5 +1,6 @@
 import type { ArchTint } from "@/components/ui/card";
 import type { LeaveTypeCode } from "@/lib/leave-engine/constants";
+import { halfDayLabel, type HalfDaySlot } from "@/lib/leave-engine/half-day";
 
 export const LEAVE_LABELS: Record<LeaveTypeCode, string> = {
   annual: "Annual leave",
@@ -31,4 +32,17 @@ export function approverRoute(approvers: readonly { level: number; name: string 
   return sorted.map((approver) => approver.name).join(", then ");
 }
 
-export const HALF_DAY_SLOT_LABELS = { morning: "Morning", afternoon: "Afternoon" } as const;
+type HalfDayFields = {
+  isHalfDay: boolean;
+  halfDaySlot: HalfDaySlot | null;
+  // The times stored when the half day was booked.
+  halfDayStart: string | null;
+  halfDayEnd: string | null;
+};
+
+// " (morning, 8:30 AM – 12:30 PM)" after the dates of a half day; "" for full days.
+export function halfDaySuffix(item: HalfDayFields): string {
+  if (!item.isHalfDay || !item.halfDaySlot) return "";
+  const label = halfDayLabel(item.halfDaySlot, item.halfDayStart, item.halfDayEnd);
+  return ` (${label.charAt(0).toLowerCase()}${label.slice(1)})`;
+}

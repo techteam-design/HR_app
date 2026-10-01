@@ -1,12 +1,13 @@
 import { cn } from "@/lib/utils/cn";
 
-export type BadgeStatus = "approved" | "pending" | "rejected" | "cancelled" | "unpaid";
+export type BadgeStatus = "approved" | "pending" | "rejected" | "cancelled" | "revoked" | "unpaid";
 
 const styles: Record<BadgeStatus, { className: string; label: string }> = {
   approved: { className: "bg-status-approved-bg text-status-approved-text", label: "Approved" },
   pending: { className: "bg-status-pending-bg text-status-pending-text", label: "Pending" },
   rejected: { className: "bg-status-rejected-bg text-status-rejected-text", label: "Rejected" },
   cancelled: { className: "bg-status-cancelled-bg text-status-cancelled-text", label: "Cancelled" },
+  revoked: { className: "bg-blush-50 text-blush-700", label: "Approval revoked" },
   unpaid: { className: "bg-sage-50 text-sage-700", label: "Unpaid" },
 };
 

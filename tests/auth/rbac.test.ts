@@ -166,7 +166,7 @@ describe("navigationFor()", () => {
     ]);
   });
 
-  it("hr_viewer sees the read-only employee list, org chart, team calendar, approval setup and reports, but no approvals or other admin pages", () => {
+  it("hr_viewer sees the read-only employee list, org chart, team calendar, leave policies, approval setup and reports, but no approvals or other admin pages", () => {
     expect(hrefs("hr_viewer")).toEqual([
       "/dashboard",
       "/leave/apply",
@@ -175,16 +175,24 @@ describe("navigationFor()", () => {
       "/team-calendar",
       "/admin/employees",
       "/admin/org-chart",
+      "/admin/leave-policies",
       "/admin/approval-config",
       "/reports",
-      "/reports/calendar",
     ]);
     expect(hrefs("hr_viewer").filter((href) => href.startsWith("/admin"))).toEqual([
       "/admin/employees",
       "/admin/org-chart",
+      "/admin/leave-policies",
       "/admin/approval-config",
     ]);
     expect(hrefs("hr_viewer")).not.toContain("/approvals");
+  });
+
+  it("has no separate Leave calendar report (the Team calendar covers it)", () => {
+    for (const role of ["employee", "manager", "hr_viewer", "admin"] as const) {
+      expect(hrefs(role)).not.toContain("/reports/calendar");
+    }
+    expect(NAV_ITEMS.filter((item) => item.section === "Reports").map((item) => item.href)).toEqual(["/reports"]);
   });
 
   it("groups Employees and Org chart under People, and Departments, Leave policies and Approval setup under Admin", () => {
@@ -196,15 +204,16 @@ describe("navigationFor()", () => {
     expect(sectionOf("/admin/approval-config")).toBe("Admin");
   });
 
-  it("People is visible to admin and hr_viewer only; Admin to admin, and to hr_viewer for the read-only approval setup only", () => {
+  it("People is visible to admin and hr_viewer only; Admin to admin, and to hr_viewer for the read-only leave policies and approval setup only", () => {
     const sections = (role: Role) => new Set(navigationFor(role).map((item) => item.section));
     for (const role of ROLES) {
       expect(sections(role).has("People")).toBe(role === "admin" || role === "hr_viewer");
       expect(sections(role).has("Admin")).toBe(role === "admin" || role === "hr_viewer");
     }
     const hrAdminItems = navigationFor("hr_viewer").filter((item) => item.section === "Admin");
-    expect(hrAdminItems.map((item) => item.href)).toEqual(["/admin/approval-config"]);
+    expect(hrAdminItems.map((item) => item.href)).toEqual(["/admin/leave-policies", "/admin/approval-config"]);
     expect(can("hr_viewer", "manage_approval_config")).toBe(false);
+    expect(can("hr_viewer", "manage_policies")).toBe(false);
   });
 
   it("deciding any request is admin only", () => {

@@ -58,3 +58,14 @@ describe("activity", () => {
     expect(nextDays("2026-12-30", 3, addDays)).toEqual(["2026-12-31", "2027-01-01", "2027-01-02"]);
   });
 });
+
+describe("activityText() for overrides", () => {
+  it("names the admin and what was overridden", () => {
+    expect(
+      activityText(event({ kind: "approval_revoked", actorName: "Vaidik Dubey", employeeName: "Maria Santos", code: "annual" })),
+    ).toBe("Vaidik Dubey revoked the approval of Maria Santos's annual leave · 30 Sep");
+    expect(activityText(event({ kind: "rejection_overridden", actorName: "Vaidik Dubey", employeeName: "Siti Rahman" }))).toBe(
+      "Vaidik Dubey overrode the rejection of Siti Rahman's MC · 30 Sep",
+    );
+  });
+});

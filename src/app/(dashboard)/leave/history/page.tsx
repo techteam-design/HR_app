@@ -13,7 +13,13 @@ import { requireEmployee } from "@/server/auth.service";
 import { applicationYears, listApplications } from "@/server/leave-application.service";
 import { APPLICATION_STATUSES, historyFilterSchema } from "@/validations/leave";
 
-const STATUS_LABELS = { pending: "Pending", approved: "Approved", rejected: "Rejected", cancelled: "Cancelled" } as const;
+const STATUS_LABELS = {
+  pending: "Pending",
+  approved: "Approved",
+  rejected: "Rejected",
+  cancelled: "Cancelled",
+  revoked: "Approval revoked",
+} as const;
 
 // The signed-in employee's own requests, newest first. Filters are plain GET
 // parameters, so they work without JavaScript and can be bookmarked.

@@ -52,19 +52,20 @@ function Field({
   );
 }
 
-// One card per leave type: the rules in plain English, and an Edit form.
-// Admin only (the page and PATCH /api/leave-policies check manage_policies).
-export function LeavePolicyCards({ policies }: { policies: PolicyView[] }) {
+// One card per leave type: the rules in plain English, and an Edit form for
+// the admin (PATCH /api/leave-policies checks manage_policies). hr_viewer
+// sees the cards read-only.
+export function LeavePolicyCards({ policies, canEdit }: { policies: PolicyView[]; canEdit: boolean }) {
   return (
     <div className="space-y-6">
       {policies.map((policy) => (
-        <PolicyCard key={policy.code} policy={policy} />
+        <PolicyCard key={policy.code} policy={policy} canEdit={canEdit} />
       ))}
     </div>
   );
 }
 
-function PolicyCard({ policy }: { policy: PolicyView }) {
+function PolicyCard({ policy, canEdit }: { policy: PolicyView; canEdit: boolean }) {
   const [editing, setEditing] = useState(false);
   const tint = LEAVE_TINTS[policy.code];
 
@@ -75,7 +76,7 @@ function PolicyCard({ policy }: { policy: PolicyView }) {
           <p className={`eyebrow ${TINT_TEXT[tint]}`}>{policy.code === "unpaid" ? "Unpaid" : "Paid"}</p>
           <h2 className="mt-1 font-display text-section-title font-medium text-plum-900">{policy.name}</h2>
         </div>
-        {!editing && (
+        {canEdit && !editing && (
           <Button variant="secondary" onClick={() => setEditing(true)}>
             Edit
           </Button>

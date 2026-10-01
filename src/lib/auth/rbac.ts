@@ -106,11 +106,11 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { href: "/admin/employees", label: "Employees", section: "People", action: "view_all_records" },
   { href: "/admin/org-chart", label: "Org chart", section: "People", action: "view_all_records" },
   { href: "/admin/departments", label: "Departments & branches", section: "Admin", action: "manage_org" },
-  { href: "/admin/leave-policies", label: "Leave policies", section: "Admin", action: "manage_policies" },
+  // Read-only for HR viewers (policies and half-day timings); editing needs manage_policies.
+  { href: "/admin/leave-policies", label: "Leave policies", section: "Admin", action: "view_all_records" },
   // Read-only for HR viewers; editing needs manage_approval_config.
   { href: "/admin/approval-config", label: "Approval setup", section: "Admin", action: "view_all_records" },
   { href: "/reports", label: "Reports", section: "Reports", action: "view_reports" },
-  { href: "/reports/calendar", label: "Leave calendar", section: "Reports", action: "view_reports" },
 ];
 
 export function navigationFor(role: Role): NavItem[] {

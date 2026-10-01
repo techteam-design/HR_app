@@ -45,6 +45,8 @@ export type CalendarApplication = {
   totalDays: number;
   isHalfDay: boolean;
   halfDaySlot: HalfDaySlot | null;
+  halfDayStart: string | null;
+  halfDayEnd: string | null;
   reason: string | null;
   progress: string;
   days: { date: IsoDate; portion: number }[];
@@ -194,6 +196,8 @@ export async function getTeamCalendar(
       totalDays: item.totalDays,
       isHalfDay: item.isHalfDay,
       halfDaySlot: item.halfDaySlot,
+      halfDayStart: item.halfDayStart,
+      halfDayEnd: item.halfDayEnd,
       reason: item.reason,
       progress: item.progress.summary,
       days: item.days,

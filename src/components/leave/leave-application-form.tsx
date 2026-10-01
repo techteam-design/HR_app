@@ -13,7 +13,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { formatDays } from "@/lib/leave-engine/balance";
 import type { LeaveTypeCode } from "@/lib/leave-engine/constants";
 import { buildDayOptions, MAX_REQUEST_RANGE_DAYS, rangeLength, totalDays, type SelectedDay } from "@/lib/leave-engine/day-selection";
-import { halfDaySlotsFor, type HalfDaySlot } from "@/lib/leave-engine/half-day";
+import type { HalfDaySlot } from "@/lib/leave-engine/half-day";
 import { addDays } from "@/lib/leave-engine/iso-date";
 import { periodRelation, periodsOf, type PeriodBalance } from "@/lib/leave-engine/request-period";
 import { APPROVAL_ROUTE_MISSING, issuesByField, validateApplication, type IssueField } from "@/lib/leave-engine/validation";
@@ -377,7 +377,7 @@ export function LeaveApplicationForm({ context, target }: { context: ApplyContex
             {halfDay && (
               <div className="space-y-2">
                 <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Half-day slot">
-                  {halfDaySlotsFor(employee.classification).map((option) => (
+                  {context.halfDaySlots.map((option) => (
                     <label
                       key={option.slot}
                       className={cn(

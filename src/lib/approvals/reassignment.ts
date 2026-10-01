@@ -10,11 +10,13 @@
 // A new route that is not valid ("No route", "Own approver"...) moves
 // nothing: the request stays with its current approvers.
 
+import type { ApplicationStatus } from "@/lib/leave-engine/cancellation";
+
 import type { ResolvedRoute, RouteMode } from "./route-resolution";
 
 export type ReassignableApplication = {
   id: string;
-  status: "pending" | "approved" | "rejected" | "cancelled";
+  status: ApplicationStatus;
   currentLevel: number;
   approvalMode: RouteMode;
   level1ApproverId: string;

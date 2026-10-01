@@ -2,10 +2,18 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, lte, ne, sql } from "drizz
 import { alias } from "drizzle-orm/pg-core";
 
 import { getDb } from "@/db";
-import { approvalActions, branches, employees, leaveApplicationDays, leaveApplications, leaveTypes } from "@/db/schema";
+import {
+  approvalActions,
+  approvalOverrides,
+  branches,
+  employees,
+  leaveApplicationDays,
+  leaveApplications,
+  leaveTypes,
+} from "@/db/schema";
 import { levelLabel } from "@/lib/approvals/decision";
 import type { LeaveTypeCode } from "@/lib/leave-engine/constants";
-import type { HalfDaySlot } from "@/lib/leave-engine/half-day";
+import { toClock, type HalfDaySlot } from "@/lib/leave-engine/half-day";
 import { addDays, type IsoDate } from "@/lib/leave-engine/iso-date";
 import { recentActivity, type ActivityEvent } from "@/lib/overview/activity";
 
@@ -29,6 +37,9 @@ export type OverviewPerson = {
   code: LeaveTypeCode;
   portion: number;
   halfDaySlot: HalfDaySlot | null;
+  // The times stored when the half day was booked.
+  halfDayStart: string | null;
+  halfDayEnd: string | null;
   status: "pending" | "approved";
 };
 
@@ -60,6 +71,7 @@ export async function getLeaveOverview(today: IsoDate): Promise<LeaveOverview> {
   const submitter = alias(employees, "submitter");
   const actor = alias(employees, "actor");
   const canceller = alias(employees, "canceller");
+  const overrider = alias(employees, "overrider");
   // The request's type and dates, for the activity text.
   const requestColumns = {
     code: leaveTypes.code,
@@ -67,7 +79,7 @@ export async function getLeaveOverview(today: IsoDate): Promise<LeaveOverview> {
     endDate: leaveApplications.endDate,
   };
 
-  const [dayRows, staffRows, branchRows, pendingRows, pendingCount, submissions, decisions, cancellations] =
+  const [dayRows, staffRows, branchRows, pendingRows, pendingCount, submissions, decisions, cancellations, overrides] =
     await db.batch([
       db
         .select({
@@ -80,6 +92,8 @@ export async function getLeaveOverview(today: IsoDate): Promise<LeaveOverview> {
           branchName: branches.name,
           code: leaveTypes.code,
           halfDaySlot: leaveApplications.halfDaySlot,
+          halfDayStart: leaveApplications.halfDayStart,
+          halfDayEnd: leaveApplications.halfDayEnd,
           status: leaveApplications.status,
         })
         .from(leaveApplicationDays)
@@ -169,6 +183,23 @@ export async function getLeaveOverview(today: IsoDate): Promise<LeaveOverview> {
         .where(isNotNull(leaveApplications.cancelledAt))
         .orderBy(desc(leaveApplications.cancelledAt))
         .limit(ACTIVITY_LIMIT),
+      // An admin's "Revoke approval" and "Approve anyway".
+      db
+        .select({
+          applicationId: approvalOverrides.applicationId,
+          at: approvalOverrides.actedAt,
+          kind: approvalOverrides.kind,
+          employeeName: employees.fullName,
+          actorName: overrider.fullName,
+          ...requestColumns,
+        })
+        .from(approvalOverrides)
+        .innerJoin(leaveApplications, eq(leaveApplications.id, approvalOverrides.applicationId))
+        .innerJoin(employees, eq(employees.id, leaveApplications.employeeId))
+        .innerJoin(leaveTypes, eq(leaveTypes.id, leaveApplications.leaveTypeId))
+        .innerJoin(overrider, eq(overrider.id, approvalOverrides.adminId))
+        .orderBy(desc(approvalOverrides.actedAt))
+        .limit(ACTIVITY_LIMIT),
     ]);
 
   // One signed photo URL per person, not per day.
@@ -190,6 +221,8 @@ export async function getLeaveOverview(today: IsoDate): Promise<LeaveOverview> {
       code: row.code,
       portion: Number(row.portion),
       halfDaySlot: row.halfDaySlot,
+      halfDayStart: row.halfDayStart ? toClock(row.halfDayStart) : null,
+      halfDayEnd: row.halfDayEnd ? toClock(row.halfDayEnd) : null,
       status: row.status as "pending" | "approved",
     }),
   );
@@ -249,6 +282,17 @@ export async function getLeaveOverview(today: IsoDate): Promise<LeaveOverview> {
           ]
         : [],
     ),
+    ...overrides.map((row) => ({
+      kind: row.kind,
+      at: row.at,
+      applicationId: row.applicationId,
+      employeeName: row.employeeName,
+      actorName: row.actorName,
+      level: null,
+      code: row.code,
+      startDate: row.startDate,
+      endDate: row.endDate,
+    })),
   ];
 
   return {

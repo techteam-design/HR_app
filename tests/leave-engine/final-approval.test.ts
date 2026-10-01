@@ -47,3 +47,12 @@ describe("finalApprovalIssues()", () => {
     expect(finalApprovalIssues({ ...base, available: 0, clashingDates: ["2026-10-12"] })).toHaveLength(2);
   });
 });
+
+describe("finalApprovalIssues() for Approve anyway", () => {
+  it("blocks with advice that fits an override", () => {
+    const issues = finalApprovalIssues({ ...base, available: 2, clashingDates: ["2026-10-20"], override: true });
+    expect(issues).toHaveLength(2);
+    expect(issues[0]).toContain("Adjust the balance first, or leave it rejected.");
+    expect(issues[1]).toContain("Cancel the other request first, or leave this one rejected.");
+  });
+});

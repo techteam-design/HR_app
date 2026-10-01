@@ -53,10 +53,15 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 - hr_viewer: read-only for other people's data (including the team calendar and the approval setup);
   can view own profile and apply for own leave. Every write endpoint on other employees' data returns 403.
 - Navigation: the "People" group (Employees, Org chart) needs view_all_records (admin + hr_viewer).
-  The "Admin" group (Departments & branches, Leave policies) is admin only, except Approval setup,
-  which hr_viewer sees read-only (page guard view_all_records, edits manage_approval_config).
+  The "Admin" group: Departments & branches is admin only; Leave policies (incl. half-day timings)
+  and Approval setup are read-only for hr_viewer (page guard view_all_records, edits
+  manage_policies / manage_approval_config).
   "Approvals" (approve_leave: managers and admin) shows a pending-count badge, hidden at 0 (admin:
-  company-wide pending; others: requests waiting for them).
+  company-wide pending; others: requests waiting for them). Its tabs: Waiting for me, All pending
+  (admin), Decided by me, All decisions (admin; see "Overrides").
+  The "Reports" group has one item, Reports (view_reports: admin + hr_viewer), a "Coming soon" card
+  until Sprint 4. There is no separate leave-calendar report: the proposal's "calendar view" is
+  delivered by the Team calendar, and /reports/calendar redirects to /team-calendar.
 - My profile is read-only, except that every employee can upload or remove their own photo.
   /profile only ever loads the signed-in employee's own record (never an id from the URL). All other
   changes go through an HR admin.
@@ -107,8 +112,10 @@ Builder: Growwstacks. Mobile-first web app (PWA), no native app.
 
 ### Half-day leave
 - Deducts 0.5 day; only on a single-date request, with a morning or afternoon slot
-- Local staff slots: morning 8:30 AM to 12:30 PM, afternoon 1:30 PM to 5:30 PM
-- Foreign staff slots: morning 9:30 AM to 1:30 PM, afternoon 2:30 PM to 6:30 PM
+- Slot times are admin-editable (Sprint 3B): Leave policies page, "Half-day timings" card. Defaults:
+  - Local staff slots: morning 8:30 AM to 12:30 PM, afternoon 1:30 PM to 5:30 PM
+  - Foreign staff slots: morning 9:30 AM to 1:30 PM, afternoon 2:30 PM to 6:30 PM
+- See "Half-day timings (as implemented, Sprint 3B part 1)".
 
 ### Approvals (as implemented, Sprint 3A)
 - Route resolution order, everywhere (submission, approval setup, warnings; pure resolveApprovalRoute()
@@ -200,8 +207,9 @@ Pure functions in src/lib/leave-engine/, tested in tests/leave-engine/. Dates ar
 ## Leave applications (as implemented, Sprint 2B)
 - Per-date selection (day-selection.ts): buildDayOptions({ start, end }) lists every date with its
   weekday, all selected; totalDays() sums portions; ranges are at most 60 days (MAX_REQUEST_RANGE_DAYS).
-- Half-day slots (half-day.ts): local morning 8:30 AM–12:30 PM, afternoon 1:30 PM–5:30 PM; foreign
-  morning 9:30 AM–1:30 PM, afternoon 2:30 PM–6:30 PM.
+- Half-day slots (half-day.ts): the times come from half_day_settings (defaults: local morning
+  8:30 AM–12:30 PM, afternoon 1:30 PM–5:30 PM; foreign morning 9:30 AM–1:30 PM, afternoon
+  2:30 PM–6:30 PM). Each half day stores the times it was booked with.
 - Which period a date falls in (request-period.ts): annual = the service year containing the date
   (join-date anniversaries); MC and unpaid = the calendar year. Relative to TODAY's period it is
   current, next (the period right after), past, or beyond. A request is always checked against the
@@ -242,15 +250,61 @@ Pure functions in src/lib/leave-engine/, tested in tests/leave-engine/. Dates ar
   service decides; CHANGED in Sprint 3A): the employee cancels their own request only while PENDING
   (including after level 1 approval); staff can NOT cancel approved leave. An approver on the request's
   route (level 1 or 2) cancels APPROVED leave at any time (pending: reject instead); an admin cancels any
-  pending or approved request. Both need a note (cancellation_note). Rejected and cancelled are final.
+  pending or approved request. Both need a note (cancellation_note). Rejected, cancelled and revoked
+  are final (an admin may still "Approve anyway" a rejected request; see "Overrides").
   Runs in the locked transaction; the update is conditional on the status it was checked against;
   balances restore automatically (plus the carry-forward correction above when needed). Cancel is
   offered on the approver queue ("Decided by me"), the team calendar detail and the employee page.
 - APIs: GET/POST /api/leave/applications (own; the employee always comes from the session),
   POST /api/leave/applications/[id]/cancel, POST /api/employees/[id]/applications (manage_employees).
 
+## Half-day timings (as implemented, Sprint 3B part 1)
+- half_day_settings: ONE row (id = 1) with the eight slot times (Postgres time) plus updated_by /
+  updated_at (last change only, shown as "Last changed {date} by {name}"). Inserted by migration 0004
+  and by db:seed (insert-only). CHECKs: each slot starts before it ends; the morning ends no later than
+  the afternoon starts (same rules in Zod halfDayTimingsSchema and halfDayTimingIssues() in
+  src/lib/leave-engine/half-day.ts).
+- src/server/half-day-timing.service.ts (loadHalfDayTimings, updateHalfDayTimings);
+  GET/PUT /api/half-day-timings (read view_all_records, write manage_policies);
+  src/components/leave/half-day-timings-card.tsx on /admin/leave-policies (admin edits, hr_viewer
+  read-only).
+- leave_applications.half_day_start / half_day_end: copied from the settings for the employee's
+  classification and slot at submission, inside the locked transaction (also on behalf). The CHECK
+  requires both times on a half day and neither on a full day. Existing rows were backfilled with the
+  defaults by the employee's classification at migration time.
+- Display reads the STORED times everywhere ("Morning, 8:30 AM – 12:30 PM": history, employee page,
+  approver cards, calendar detail, overview). The apply form shows the configured times. The employee
+  calendar keeps "½ AM/PM" (no times).
+
+## Overrides (as implemented, Sprint 3B part 1)
+- Admin only (decide_any_leave), always with a reason (3–500 characters):
+  - "Revoke approval": APPROVED (decided by anyone) -> new status revoked, badge "Approval revoked".
+    Final, like cancelled: never approved again (the employee re-applies or the admin applies on
+    behalf). Balance restores (only pending and approved days count).
+  - "Approve anyway": REJECTED -> approved. A final approval: balance and overlap re-checked exactly
+    as at final approval (finalApprovalIssues with override: true); blocked with a clear message if it
+    no longer fits. A request rejected at level 1 of a two-level route skips level 2.
+- Both run in withEmployeeLock (runLocked); the update is conditional on the status the admin saw;
+  carry-forward corrections apply (events "revocation" / "approval").
+- approval_overrides (append-only): kind (approval_revoked / rejection_overridden), admin_id, reason,
+  from_status, to_status, acted_at. The original decision in approval_actions is never changed, so its
+  unique (application_id, level) index still blocks double decisions. (No CHECK on to_status =
+  'revoked': a CHECK cannot use an enum value added in the same migration; the service sets it.)
+- Rules: src/lib/approvals/override.ts. Service: overrideApplication in approval.service.ts.
+  API: POST /api/approvals/[id]/override {action: "revoke" | "approve", reason}.
+- Shown as history lines after the decisions: "Approval revoked by {admin}" / "Rejection overridden by
+  {admin}" with the reason (approvalProgress) in the employee's history, the employee page, the
+  approver's "Decided by me" (the admin's own overrides appear there too), the team calendar detail
+  (revoked leave leaves the calendar), and the overview's recent activity.
+- Offered on the All decisions list (newest row per request) and the employee page's Leave requests.
+  Admins keep "Cancel leave" too: Cancel = leave no longer needed, Revoke = the approval was wrong.
+- All decisions tab (/approvals?view=decisions, src/server/approval-decisions.service.ts): every
+  decision and override in a date range by Brunei date (default this month), a summary per approver
+  (approved, rejected, overrides in the range; "waiting now" is today's count), filters (approver,
+  action, branch, employee, dates), 20 per page. One db.batch; filtered and paged in memory.
+
 ## Concurrency (as implemented, Sprint 3A)
-- Balance-affecting writes (submit, apply on behalf, final approval, cancel, adjustments) run in
+- Balance-affecting writes (submit, apply on behalf, final approval, cancel, adjustments, overrides) run in
   withEmployeeLock (src/db/transaction.ts): the Neon WebSocket driver (Pool with max 1, created and
   closed within the request, as Workers require), one transaction, SET LOCAL lock_timeout '5s', then
   pg_advisory_xact_lock(5301, hashtext(employee_id)), then the re-check and the writes. runLocked
@@ -358,7 +412,8 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - The balance-affecting writes open a WebSocket to Neon per request (Pool created and closed in the
   request); no Hyperdrive or extra binding is used.
 - After migrations 0002/0003 (approval_workflows dropped), older Worker builds fail on leave submission:
-  redeploy staging whenever the dev database is migrated.
+  redeploy staging whenever the dev database is migrated. Same for 0004: older builds cannot save half
+  days (no stored times, refused by the CHECK).
 - Placement: wrangler.jsonc has "placement": { "region": "aws:ap-southeast-1" }, so the Worker runs next
   to the Neon database (AWS Singapore) instead of near the user. Chosen over Smart Placement, which
   needs steady traffic to engage (low on staging) and leaves 1% of requests unplaced. Check it with the
@@ -544,14 +599,30 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
     page queries in parallel; fewer statements inside the submit lock; a limit on the overview's
     pending list.
 
+### Sprint 3B part 1 (code complete, awaiting migration and manual testing)
+- Demo cleanup: the Reports group has only Reports ("Coming soon" card); /reports/calendar redirects
+  to /team-calendar.
+- Schema: migration 0004 (drizzle/0004_half_day_times_overrides.sql): half_day_settings (+ default
+  row), leave_applications.half_day_start/half_day_end (+ backfill, CHECK replaced),
+  approval_overrides (+ enum approval_override_kind), status value revoked.
+- Half-day timings and Overrides: see their sections above. Leave policies opened read-only to
+  hr_viewer.
+- Dev data: db:reset:dev clears approval_overrides and half_day_settings; db:seed re-inserts the
+  default timings.
+- Tests: tests/approvals/override.test.ts, override-service.test.ts, decision-summary.test.ts; new
+  cases in half-day, progress, activity, cancellation, carry-forward-correction, final-approval,
+  validations and rbac tests.
+
+### Sprint 3B part 2 (next)
+- Resend email notifications: submit, approve, reject, level 2 handoff, AND overrides (tell the
+  employee when an approval is revoked or a rejection is overridden, with the reason).
+- Pending-approval reminder cron (/api/cron/reminders, still 501; needs a second cron trigger in
+  custom-worker.ts and wrangler.jsonc). The resend package is not installed yet, and the email
+  templates are empty .tsx files (React Email is not an approved package).
+- The notice card; DNS move of hr.sbcwellness.com to Cloudflare.
+
 ### Open items carried forward from Sprint 3A
-- Sprint 3B scope:
-  - Resend email notifications (submit, approve, reject, level 2 handoff) and the pending-approval
-    reminder cron (/api/cron/reminders, still 501; needs a second cron trigger in custom-worker.ts and
-    wrangler.jsonc). The resend package is not installed yet, and the email templates are empty .tsx
-    files (React Email is not an approved package).
-  - The notice card.
-  - DNS move of hr.sbcwellness.com to Cloudflare.
+- Sprint 3B scope: part 1 done (see above); part 2 = emails, reminders, notice card, DNS.
 - Mobile polish: to review later.
 - Carry-forward dev scenario before UAT (Sprint 4); see "Internal to-dos".
 - Performance polish (Sprint 4): the deferred optional fixes in "Performance (end of Sprint 3A)".
@@ -562,7 +633,8 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - `npm run db:reset:dev` (src/db/reset-dev.ts): needs ALLOW_DEV_SEED=true, refuses NODE_ENV=production,
   prints the database host and asks you to type RESET DEV. Deletes all app data and all Better Auth
   users/sessions/accounts (schema kept), then runs db:seed (MC rounds up), db:seed:admin, db:seed:dev
-  and db:entitlements. Running it twice gives the same result.
+  and db:entitlements. Running it twice gives the same result. It also clears approval_overrides and
+  the half-day timings (db:seed re-inserts the defaults).
 - The team (seed-dev.ts, join dates relative to today in Brunei; logins use SEED_DEV_PASSWORD at
   @example.test, except the admin, who uses SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD):
   - Admin (seed-admin login): the ONLY admin; Branch A, Management. Takes no leave.
@@ -615,9 +687,13 @@ hospitalisation leave, leave encashment, shift scheduling, performance managemen
 - Sprint 2B (done): per-date day selection, leave application, validation, cancellation, history.
 - Sprint 3A (done): approval routes and setup, approver queue, two-level flow, final-approval
   re-check, new cancellation rules, team calendar, admin/HR overview, the concurrency fix.
-- Sprint 3B (next): notifications via Resend (including reminders, /api/cron/reminders), the notice
-  card, and the DNS move to Cloudflare.
-- Sprint 4: reports, exports, production go-live.
+- Sprint 3B part 1 (code complete): demo cleanup, admin-editable half-day timings, All decisions tab
+  with Revoke approval / Approve anyway.
+- Sprint 3B part 2 (next): notifications via Resend (including reminders, /api/cron/reminders, and
+  override emails), the notice card, and the DNS move to Cloudflare.
+- Sprint 4: reports and Excel exports on /reports (leave trends by department, headcount, balances,
+  leave records; no calendar report, the Team calendar covers it; revoked requests reported
+  separately from cancellations), production go-live.
 
 ### How we work
 - The user runs all terminal, database, git and Cloudflare commands themself. Claude may run tsc, eslint,

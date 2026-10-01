@@ -5,6 +5,7 @@ import {
   adjustmentSchema,
   applicationSchema,
   cancelApplicationSchema,
+  halfDayTimingsSchema,
   historyFilterSchema,
   policyUpdateSchema,
 } from "@/validations/leave";
@@ -115,5 +116,42 @@ describe("cancelApplicationSchema and historyFilterSchema", () => {
       status: undefined,
       year: undefined,
     });
+  });
+});
+
+describe("halfDayTimingsSchema", () => {
+  const valid = {
+    localMorningStart: "08:30",
+    localMorningEnd: "12:30",
+    localAfternoonStart: "13:30",
+    localAfternoonEnd: "17:30",
+    foreignMorningStart: "09:30",
+    foreignMorningEnd: "13:30",
+    foreignAfternoonStart: "14:30",
+    foreignAfternoonEnd: "18:30",
+  };
+  const errors = (input: object) => {
+    const result = halfDayTimingsSchema.safeParse({ ...valid, ...input });
+    return result.success ? {} : fieldErrorsOf(result.error);
+  };
+
+  it("accepts the defaults", () => {
+    expect(halfDayTimingsSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it("refuses missing or invalid times on the right field", () => {
+    expect(errors({ localMorningStart: "" })).toEqual({ localMorningStart: "Enter a valid time" });
+    expect(errors({ foreignAfternoonEnd: "7pm" })).toEqual({ foreignAfternoonEnd: "Enter a valid time" });
+  });
+
+  it("refuses an end before the start, and a morning running into the afternoon", () => {
+    expect(errors({ localMorningEnd: "08:00" })).toEqual({ localMorningEnd: "Local morning must end after it starts" });
+    expect(errors({ foreignMorningEnd: "15:00" })).toEqual({
+      foreignAfternoonStart: "Foreign afternoon can't start before the morning ends",
+    });
+  });
+
+  it("accepts the revoked status in the history filter", () => {
+    expect(historyFilterSchema.parse({ status: "revoked" }).status).toBe("revoked");
   });
 });

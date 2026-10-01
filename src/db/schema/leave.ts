@@ -10,6 +10,7 @@ import {
   numeric,
   pgTable,
   text,
+  time,
   timestamp,
   unique,
   uuid,
@@ -65,6 +66,44 @@ export const leavePolicies = pgTable("leave_policies", {
   }),
   ...timestamps,
 });
+
+// Half-day slot times, admin-editable on the Leave policies page: exactly
+// one row (id = 1), inserted by migration 0004 with the defaults (local
+// 8:30-12:30 / 13:30-17:30, foreign 9:30-13:30 / 14:30-18:30). Each
+// half-day application stores the times it was booked with, so a change
+// here never rewrites history.
+export const halfDaySettings = pgTable(
+  "half_day_settings",
+  {
+    id: integer("id").primaryKey().default(1),
+    localMorningStart: time("local_morning_start").notNull(),
+    localMorningEnd: time("local_morning_end").notNull(),
+    localAfternoonStart: time("local_afternoon_start").notNull(),
+    localAfternoonEnd: time("local_afternoon_end").notNull(),
+    foreignMorningStart: time("foreign_morning_start").notNull(),
+    foreignMorningEnd: time("foreign_morning_end").notNull(),
+    foreignAfternoonStart: time("foreign_afternoon_start").notNull(),
+    foreignAfternoonEnd: time("foreign_afternoon_end").notNull(),
+    // Who last changed the timings in the app (null: the migration's defaults).
+    updatedBy: uuid("updated_by").references(() => employees.id, {
+      onDelete: "restrict",
+    }),
+    ...timestamps,
+  },
+  (table) => [
+    check("half_day_settings_single_row_check", sql`${table.id} = 1`),
+    // Each slot starts before it ends; the morning ends before (or when)
+    // the afternoon starts.
+    check(
+      "half_day_settings_local_check",
+      sql`${table.localMorningStart} < ${table.localMorningEnd} AND ${table.localMorningEnd} <= ${table.localAfternoonStart} AND ${table.localAfternoonStart} < ${table.localAfternoonEnd}`,
+    ),
+    check(
+      "half_day_settings_foreign_check",
+      sql`${table.foreignMorningStart} < ${table.foreignMorningEnd} AND ${table.foreignMorningEnd} <= ${table.foreignAfternoonStart} AND ${table.foreignAfternoonStart} < ${table.foreignAfternoonEnd}`,
+    ),
+  ],
+);
 
 // One row per employee, per leave type, per period.
 // Days taken are NOT stored: they are always calculated from approved
@@ -173,6 +212,10 @@ export const leaveApplications = pgTable(
     endDate: date("end_date").notNull(),
     isHalfDay: boolean("is_half_day").notNull().default(false),
     halfDaySlot: halfDaySlotEnum("half_day_slot"),
+    // The slot's times when the half day was booked (from half_day_settings
+    // and the employee's classification), so history survives timing changes.
+    halfDayStart: time("half_day_start"),
+    halfDayEnd: time("half_day_end"),
     totalDays: dayCount("total_days").notNull(),
     reason: text("reason"),
     status: leaveApplicationStatusEnum("status").notNull().default("pending"),
@@ -240,11 +283,11 @@ export const leaveApplications = pgTable(
       "leave_applications_current_level_check",
       sql`${table.currentLevel} IN (1, 2)`,
     ),
-    // A half day is a single date with a slot and deducts 0.5 day.
-    // A full-day application has no slot.
+    // A half day is a single date with a slot and its booked times, and
+    // deducts 0.5 day. A full-day application has no slot and no times.
     check(
       "leave_applications_half_day_check",
-      sql`(${table.isHalfDay} AND ${table.halfDaySlot} IS NOT NULL AND ${table.startDate} = ${table.endDate} AND ${table.totalDays} = 0.5) OR (NOT ${table.isHalfDay} AND ${table.halfDaySlot} IS NULL)`,
+      sql`(${table.isHalfDay} AND ${table.halfDaySlot} IS NOT NULL AND ${table.halfDayStart} IS NOT NULL AND ${table.halfDayEnd} IS NOT NULL AND ${table.halfDayStart} < ${table.halfDayEnd} AND ${table.startDate} = ${table.endDate} AND ${table.totalDays} = 0.5) OR (NOT ${table.isHalfDay} AND ${table.halfDaySlot} IS NULL AND ${table.halfDayStart} IS NULL AND ${table.halfDayEnd} IS NULL)`,
     ),
     // Single level: no level 2 approver and never at level 2. Two-level: a
     // level 2 approver. Level 1 and level 2 may be the same person after a

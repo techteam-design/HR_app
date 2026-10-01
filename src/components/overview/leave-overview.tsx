@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { daysLabel, LEAVE_LABELS } from "@/components/leave/labels";
+import { daysLabel, halfDaySuffix, LEAVE_LABELS } from "@/components/leave/labels";
 import { Avatar } from "@/components/ui/avatar";
 import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -11,9 +11,10 @@ import type { LeaveOverview, OverviewPerson } from "@/server/leave-overview.serv
 
 // Company leave overview (admin; HR viewer read-only). Display only.
 
+// "Full day", "Half day (morning, 8:30 AM – 12:30 PM)".
 function portionText(person: OverviewPerson): string {
   if (person.portion === 1) return "Full day";
-  return person.halfDaySlot === "afternoon" ? "Half day (afternoon)" : "Half day (morning)";
+  return `Half day${halfDaySuffix({ ...person, isHalfDay: true })}`;
 }
 
 function PersonRow({ person, showPending }: { person: OverviewPerson; showPending?: boolean }) {

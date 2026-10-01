@@ -3,7 +3,6 @@ import {
   BuildingIcon,
   CalendarIcon,
   CalendarPlusIcon,
-  CalendarRangeIcon,
   ChartIcon,
   CheckCircleIcon,
   HistoryIcon,
@@ -30,16 +29,14 @@ const NAV_ICONS: Record<string, IconComponent> = {
   "/admin/leave-policies": PolicyIcon,
   "/admin/approval-config": ApprovalFlowIcon,
   "/reports": ChartIcon,
-  "/reports/calendar": CalendarRangeIcon,
 };
 
 export function iconFor(href: string): IconComponent {
   return NAV_ICONS[href] ?? HomeIcon;
 }
 
-// "/reports" must not stay active on "/reports/calendar".
 export function isActivePath(pathname: string, href: string): boolean {
-  return pathname === href || (href !== "/reports" && pathname.startsWith(`${href}/`));
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 // Count pill for a nav item (e.g. pending approvals). Callers hide it at 0.

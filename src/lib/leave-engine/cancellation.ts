@@ -7,11 +7,12 @@
 //   at any time, with a required note. Pending requests are rejected, not
 //   cancelled.
 // - An admin: any pending or approved request, with a required note.
-// - Rejected and cancelled requests are final.
+// - Rejected, cancelled and revoked requests are final. (An admin may still
+//   "Approve anyway" a rejected request: src/lib/approvals/override.ts.)
 // Balances restore automatically: they are calculated from pending and
 // approved requests only.
 
-export type ApplicationStatus = "pending" | "approved" | "rejected" | "cancelled";
+export type ApplicationStatus = "pending" | "approved" | "rejected" | "cancelled" | "revoked";
 
 export type CancelDecision =
   | { allowed: true; as: "owner" | "approver" | "admin"; noteRequired: boolean }
@@ -35,6 +36,7 @@ export function cancelDecision({
   if (status === "rejected" || status === "cancelled") {
     return { allowed: false, reason: `This request is already ${status}.` };
   }
+  if (status === "revoked") return { allowed: false, reason: "This request's approval was revoked." };
   if (isOwner && status === "pending") return { allowed: true, as: "owner", noteRequired: false };
   if (isAdmin) return { allowed: true, as: "admin", noteRequired: true };
   if (isApprover && status === "approved") return { allowed: true, as: "approver", noteRequired: true };

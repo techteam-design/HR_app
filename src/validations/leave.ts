@@ -2,7 +2,12 @@ import { z } from "zod";
 
 import { LEAVE_TYPE_CODES, PRORATE_ROUNDINGS } from "@/lib/leave-engine/constants";
 import { MAX_REQUEST_RANGE_DAYS } from "@/lib/leave-engine/day-selection";
-import { HALF_DAY_SLOTS } from "@/lib/leave-engine/half-day";
+import {
+  HALF_DAY_SLOTS,
+  halfDayTimingIssues,
+  isClockTime,
+  type HalfDayTimings,
+} from "@/lib/leave-engine/half-day";
 import { parseIsoDate, toIsoDate } from "@/lib/leave-engine/iso-date";
 
 // Shared by the API routes (server) and the leave forms (client).
@@ -139,7 +144,7 @@ export type PolicyUpdateInput = z.infer<typeof policyUpdateSchema>;
 // Leave applications
 // ---------------------------------------------------------------------------
 
-export const APPLICATION_STATUSES = ["pending", "approved", "rejected", "cancelled"] as const;
+export const APPLICATION_STATUSES = ["pending", "approved", "rejected", "cancelled", "revoked"] as const;
 export type ApplicationStatusFilter = (typeof APPLICATION_STATUSES)[number];
 
 const isRealDate = (value: string) => {
@@ -219,3 +224,69 @@ export const historyFilterSchema = z.object({
 });
 
 export type HistoryFilter = z.infer<typeof historyFilterSchema>;
+
+// ---------------------------------------------------------------------------
+// Half-day timings (Leave policies page)
+// ---------------------------------------------------------------------------
+
+// One field per slot time, 24-hour "HH:MM" (what <input type="time"> sends).
+export const HALF_DAY_TIMING_FIELDS = [
+  "localMorningStart",
+  "localMorningEnd",
+  "localAfternoonStart",
+  "localAfternoonEnd",
+  "foreignMorningStart",
+  "foreignMorningEnd",
+  "foreignAfternoonStart",
+  "foreignAfternoonEnd",
+] as const;
+export type HalfDayTimingField = (typeof HALF_DAY_TIMING_FIELDS)[number];
+export type HalfDayTimingsInput = Record<HalfDayTimingField, string>;
+
+const clock = z
+  .string({ error: "Enter a valid time" })
+  .trim()
+  .refine(isClockTime, "Enter a valid time");
+
+export function timingsFromInput(input: HalfDayTimingsInput): HalfDayTimings {
+  return {
+    local: {
+      morning: { start: input.localMorningStart, end: input.localMorningEnd },
+      afternoon: { start: input.localAfternoonStart, end: input.localAfternoonEnd },
+    },
+    foreign: {
+      morning: { start: input.foreignMorningStart, end: input.foreignMorningEnd },
+      afternoon: { start: input.foreignAfternoonStart, end: input.foreignAfternoonEnd },
+    },
+  };
+}
+
+export function inputFromTimings(timings: HalfDayTimings): HalfDayTimingsInput {
+  return {
+    localMorningStart: timings.local.morning.start,
+    localMorningEnd: timings.local.morning.end,
+    localAfternoonStart: timings.local.afternoon.start,
+    localAfternoonEnd: timings.local.afternoon.end,
+    foreignMorningStart: timings.foreign.morning.start,
+    foreignMorningEnd: timings.foreign.morning.end,
+    foreignAfternoonStart: timings.foreign.afternoon.start,
+    foreignAfternoonEnd: timings.foreign.afternoon.end,
+  };
+}
+
+// "local.morning.end" -> "localMorningEnd"
+export function timingField(path: string): HalfDayTimingField {
+  const [classification, slot, field] = path.split(".");
+  const cap = (word: string) => word.charAt(0).toUpperCase() + word.slice(1);
+  return `${classification}${cap(slot)}${cap(field)}` as HalfDayTimingField;
+}
+
+// The same rules as the service and the database CHECKs
+// (halfDayTimingIssues in src/lib/leave-engine/half-day.ts).
+export const halfDayTimingsSchema = z
+  .object(Object.fromEntries(HALF_DAY_TIMING_FIELDS.map((field) => [field, clock])) as Record<HalfDayTimingField, typeof clock>)
+  .superRefine((value, context) => {
+    for (const issue of halfDayTimingIssues(timingsFromInput(value))) {
+      context.addIssue({ code: "custom", path: [timingField(issue.path)], message: issue.message });
+    }
+  });

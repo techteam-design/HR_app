@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+import { MIN_OVERRIDE_REASON_LENGTH, OVERRIDE_ACTIONS } from "@/lib/approvals/override";
+import { parseIsoDate, toIsoDate } from "@/lib/leave-engine/iso-date";
+
 // Shared by the approval API routes (server) and the forms (client). The
 // business rules (approvers active managers or admins, nobody approves
 // themself...) are checked by src/lib/approvals/route-config.ts in the
@@ -80,6 +83,20 @@ export const decisionSchema = z
 
 export type DecisionInput = z.infer<typeof decisionSchema>;
 
+// An admin's "Revoke approval" or "Approve anyway"; the reason is required.
+export const overrideSchema = z.object({
+  action: z.enum(OVERRIDE_ACTIONS, { error: "Choose revoke or approve" }),
+  reason: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() : value),
+    z
+      .string({ error: "Give a reason" })
+      .min(MIN_OVERRIDE_REASON_LENGTH, `Give a reason (at least ${MIN_OVERRIDE_REASON_LENGTH} characters)`)
+      .max(500, "The reason must be at most 500 characters"),
+  ),
+});
+
+export type OverrideInput = z.infer<typeof overrideSchema>;
+
 // Query-string filters; anything invalid means "all".
 const optionalFilterId = z.uuid().optional().catch(undefined);
 
@@ -105,7 +122,35 @@ export const calendarFilterSchema = z.object({
   branchId: z.union([z.literal("all"), z.uuid()]).optional().catch(undefined),
 });
 
-export const QUEUE_VIEWS = ["mine", "all", "decided"] as const;
+// "decisions" (All decisions) is admin only, like "all".
+export const QUEUE_VIEWS = ["mine", "all", "decided", "decisions"] as const;
 export type QueueView = (typeof QUEUE_VIEWS)[number];
 
 export const queueViewSchema = z.enum(QUEUE_VIEWS).catch("mine");
+
+// "All decisions" filters from the query string; anything invalid means
+// "all" (dates: the default range, this month).
+export const DECISION_FILTER_ACTIONS = ["approved", "rejected", "approval_revoked", "rejection_overridden"] as const;
+export type DecisionFilterAction = (typeof DECISION_FILTER_ACTIONS)[number];
+
+const isRealDate = (value: string) => {
+  try {
+    const [year, month, day] = parseIsoDate(value);
+    return toIsoDate(year, month, day) === value;
+  } catch {
+    return false;
+  }
+};
+const optionalFilterDate = z.string().refine(isRealDate).optional().catch(undefined);
+
+export const decisionsFilterSchema = z.object({
+  approverId: optionalFilterId,
+  action: z.enum(DECISION_FILTER_ACTIONS).optional().catch(undefined),
+  branchId: optionalFilterId,
+  employeeId: optionalFilterId,
+  from: optionalFilterDate,
+  to: optionalFilterDate,
+  page: z.coerce.number().int().min(1).max(10_000).optional().catch(undefined),
+});
+
+export type DecisionsFilter = z.infer<typeof decisionsFilterSchema>;

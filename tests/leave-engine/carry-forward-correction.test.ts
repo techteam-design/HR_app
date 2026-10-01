@@ -57,5 +57,8 @@ describe("carryForwardCorrection()", () => {
     expect(carryForwardCorrectionNote("approval", "3 – 5 Sep 2026")).toBe(
       "Carry-forward recalculated after approval of annual leave 3 – 5 Sep 2026 in the previous leave year.",
     );
+    expect(carryForwardCorrectionNote("revocation", "3 – 5 Sep 2026")).toBe(
+      "Carry-forward recalculated after revocation of annual leave 3 – 5 Sep 2026 in the previous leave year.",
+    );
   });
 });

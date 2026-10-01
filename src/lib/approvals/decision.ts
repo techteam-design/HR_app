@@ -8,11 +8,13 @@
 //   level 2). Approval at the last level is the final approval: only then
 //   do the days count against the balance.
 
+import type { ApplicationStatus } from "@/lib/leave-engine/cancellation";
+
 export type DecisionAction = "approve" | "reject";
 
 export type DecisionApplication = {
   employeeId: string;
-  status: "pending" | "approved" | "rejected" | "cancelled";
+  status: ApplicationStatus;
   approvalMode: "single" | "two_level";
   currentLevel: number;
   level1ApproverId: string;

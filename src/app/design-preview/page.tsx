@@ -101,6 +101,7 @@ export default function DesignPreviewPage() {
           <StatusBadge status="pending" />
           <StatusBadge status="rejected" />
           <StatusBadge status="cancelled" />
+          <StatusBadge status="revoked" />
           <StatusBadge status="unpaid" />
         </div>
       </Section>

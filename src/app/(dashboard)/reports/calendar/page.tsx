@@ -1,14 +1,7 @@
-import { PagePlaceholder } from "@/components/layout/page-placeholder";
-import { requireEmployee } from "@/server/auth.service";
+import { redirect } from "next/navigation";
 
-export default async function LeaveCalendarReportPage() {
-  await requireEmployee({ action: "view_reports" });
-
-  return (
-    <PagePlaceholder
-      title="Leave calendar"
-      sprint="Sprint 4"
-      description="Company-wide leave calendar by branch and department."
-    />
-  );
+// The company-wide leave calendar is the Team calendar (every role, with
+// what each role may see decided there). Kept so old links still work.
+export default function LeaveCalendarReportPage() {
+  redirect("/team-calendar");
 }

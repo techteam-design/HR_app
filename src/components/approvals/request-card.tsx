@@ -1,6 +1,6 @@
 import { ApprovalProgress } from "@/components/leave/approval-progress";
 import { CancelApplicationButton } from "@/components/leave/cancel-application-button";
-import { daysLabel, HALF_DAY_SLOT_LABELS, LEAVE_LABELS } from "@/components/leave/labels";
+import { daysLabel, halfDaySuffix, LEAVE_LABELS } from "@/components/leave/labels";
 import { Avatar } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { formatDays } from "@/lib/leave-engine/balance";
@@ -9,6 +9,13 @@ import { formatDateRange, formatDisplayDate, formatWeekdayDate, todayIsoInBrunei
 import type { QueueItem } from "@/server/approval.service";
 
 import { DecisionButtons } from "./decision-buttons";
+
+const MY_DECISION: Record<NonNullable<QueueItem["myDecision"]>["action"], string> = {
+  approved: "You approved this",
+  rejected: "You rejected this",
+  approval_revoked: "You revoked the approval",
+  rejection_overridden: "You overrode the rejection",
+};
 
 // One request in the approver queue. Display only: deciding and cancelling
 // are enforced by the server.
@@ -41,7 +48,7 @@ export function RequestCard({ item }: { item: QueueItem }) {
             </div>
             <p className="text-[15px] text-plum-900">
               {range} · {days}
-              {item.isHalfDay && item.halfDaySlot && ` (${HALF_DAY_SLOT_LABELS[item.halfDaySlot].toLowerCase()})`}
+              {halfDaySuffix(item)}
             </p>
             {item.balance && (
               <p className={cn("text-[13px]", item.balance.after < 0 ? "text-status-rejected-text" : "text-muted")}>
@@ -56,9 +63,11 @@ export function RequestCard({ item }: { item: QueueItem }) {
             {item.reason && <p className="text-[13px] break-words text-muted">Reason: {item.reason}</p>}
             {item.myDecision && (
               <p className="text-[13px] text-plum-900">
-                You {item.myDecision.action} this
-                {item.approvalMode === "two_level" ? ` at level ${item.myDecision.level}` : ""} on{" "}
-                {formatDisplayDate(todayIsoInBrunei(item.myDecision.actedAt))}.
+                {MY_DECISION[item.myDecision.action]}
+                {item.approvalMode === "two_level" && item.myDecision.level !== null
+                  ? ` at level ${item.myDecision.level}`
+                  : ""}{" "}
+                on {formatDisplayDate(todayIsoInBrunei(item.myDecision.actedAt))}.
               </p>
             )}
             <ApprovalProgress progress={item.progress} />

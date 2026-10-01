@@ -73,3 +73,34 @@ describe("approvalProgress()", () => {
     expect(approvalProgress(twoLevel({ status: "cancelled" }), []).lines).toEqual([]);
   });
 });
+
+describe("approvalProgress() with an admin override", () => {
+  const single = (status: ProgressApplication["status"]): ProgressApplication => ({
+    status,
+    approvalMode: "single",
+    currentLevel: 1,
+    approvers: [{ level: 1, id: "daniel", name: "Daniel Tan" }],
+  });
+
+  it("revoked approval: the decision, then the revocation with its reason", () => {
+    const progress = approvalProgress(
+      single("revoked"),
+      [{ level: 1, action: "approved", approverId: "daniel", approverName: "Daniel Tan", remarks: null }],
+      [{ kind: "approval_revoked", adminName: "Vaidik Dubey", reason: "Approved by mistake", actedAt: new Date() }],
+    );
+    expect(progress.lines).toEqual([
+      { text: "Approved by Daniel Tan", remarks: null },
+      { text: "Approval revoked by Vaidik Dubey", remarks: "Approved by mistake" },
+    ]);
+    expect(progress.summary).toBe("Approved by Daniel Tan, approval revoked by Vaidik Dubey");
+  });
+
+  it("rejection overridden at level 1 of a two-level route: no waiting line for level 2", () => {
+    const progress = approvalProgress(
+      twoLevel({ status: "approved", currentLevel: 1 }),
+      [{ level: 1, action: "rejected", approverId: "chua", approverName: "Chua Mei Ling", remarks: "Too busy" }],
+      [{ kind: "rejection_overridden", adminName: "Vaidik Dubey", reason: "Cover arranged", actedAt: new Date() }],
+    );
+    expect(progress.summary).toBe("Rejected by Chua Mei Ling (level 1), rejection overridden by Vaidik Dubey");
+  });
+});

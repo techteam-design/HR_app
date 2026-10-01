@@ -4,7 +4,14 @@ import type { LeaveTypeCode } from "@/lib/leave-engine/constants";
 import type { IsoDate } from "@/lib/leave-engine/iso-date";
 import { formatShortDateRange } from "@/lib/utils/dates";
 
-export type ActivityKind = "submitted" | "approved" | "rejected" | "cancelled";
+export type ActivityKind =
+  | "submitted"
+  | "approved"
+  | "rejected"
+  | "cancelled"
+  // An admin's override (approval_overrides).
+  | "approval_revoked"
+  | "rejection_overridden";
 
 export type ActivityEvent = {
   kind: ActivityKind;
@@ -36,7 +43,9 @@ export const ACTIVITY_TYPE_TEXT: Record<LeaveTypeCode, string> = {
 // "Priya Nair requested MC · 30 Sep",
 // "Vaidik Dubey requested annual leave for Priya Nair · 19–20 Oct",
 // "Daniel Tan approved Maria Santos's annual leave · 19–20 Oct (level 1)",
-// "Vaidik Dubey cancelled Kelvin Ong's unpaid leave · 2 Nov".
+// "Vaidik Dubey cancelled Kelvin Ong's unpaid leave · 2 Nov",
+// "Vaidik Dubey revoked the approval of Maria Santos's annual leave · 19–20 Oct",
+// "Vaidik Dubey overrode the rejection of Siti Rahman's MC · 2 Nov".
 export function activityText(event: ActivityEvent): string {
   const type = ACTIVITY_TYPE_TEXT[event.code];
   const dates = formatShortDateRange(event.startDate, event.endDate);
@@ -46,6 +55,12 @@ export function activityText(event: ActivityEvent): string {
       : `${event.employeeName} requested ${type} · ${dates}`;
   }
   const actor = event.actorName ?? "Someone";
+  if (event.kind === "approval_revoked") {
+    return `${actor} revoked the approval of ${event.employeeName}'s ${type} · ${dates}`;
+  }
+  if (event.kind === "rejection_overridden") {
+    return `${actor} overrode the rejection of ${event.employeeName}'s ${type} · ${dates}`;
+  }
   const level = event.level ? ` (level ${event.level})` : "";
   return `${actor} ${event.kind} ${event.employeeName}'s ${type} · ${dates}${level}`;
 }

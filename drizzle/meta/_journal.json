@@ -29,6 +29,13 @@
       "when": 1790680162485,
       "tag": "0003_drop_approval_workflows",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790840696082,
+      "tag": "0004_half_day_times_overrides",
+      "breakpoints": true
     }
   ]
 }

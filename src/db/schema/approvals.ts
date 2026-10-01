@@ -12,7 +12,13 @@ import {
 
 import { timestamps } from "./columns";
 import { branches, employees } from "./employees";
-import { approvalActionEnum, approvalModeEnum, approvalReassignmentCauseEnum } from "./enums";
+import {
+  approvalActionEnum,
+  approvalModeEnum,
+  approvalOverrideKindEnum,
+  approvalReassignmentCauseEnum,
+  leaveApplicationStatusEnum,
+} from "./enums";
 import { leaveApplications } from "./leave";
 
 // Approval routes are resolved in this order (src/lib/approvals):
@@ -181,6 +187,45 @@ export const approvalReassignments = pgTable(
     check(
       "approval_reassignments_changed_check",
       sql`${table.fromApproverId} IS DISTINCT FROM ${table.toApproverId}`,
+    ),
+  ],
+);
+
+// Append-only record of an admin overriding a decision after the fact:
+// "Revoke approval" (approved -> revoked) or "Approve anyway" (rejected ->
+// approved). The original decision in approval_actions is never changed, so
+// its unique (application_id, level) index keeps blocking double decisions.
+export const approvalOverrides = pgTable(
+  "approval_overrides",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    applicationId: uuid("application_id")
+      .notNull()
+      .references(() => leaveApplications.id, { onDelete: "cascade" }),
+    kind: approvalOverrideKindEnum("kind").notNull(),
+    adminId: uuid("admin_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    fromStatus: leaveApplicationStatusEnum("from_status").notNull(),
+    toStatus: leaveApplicationStatusEnum("to_status").notNull(),
+    actedAt: timestamp("acted_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("approval_overrides_application_id_idx").on(table.applicationId),
+    // The admin's overrides in "Decided by me" and "All decisions".
+    index("approval_overrides_admin_id_acted_at_idx").on(table.adminId, table.actedAt),
+    check(
+      "approval_overrides_reason_check",
+      sql`length(btrim(${table.reason})) > 0`,
+    ),
+    // The status each kind starts from. (to_status 'revoked' is set by the
+    // service: a CHECK cannot use an enum value added in the same migration.)
+    check(
+      "approval_overrides_kind_check",
+      sql`(${table.kind} = 'approval_revoked' AND ${table.fromStatus} = 'approved') OR (${table.kind} = 'rejection_overridden' AND ${table.fromStatus} = 'rejected' AND ${table.toStatus} = 'approved')`,
     ),
   ],
 );

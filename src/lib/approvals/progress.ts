@@ -4,9 +4,16 @@
 // A decision taken by an admin in place of the assigned approver says so:
 // "Approved by Vaidik Dubey (admin, level 1)". On a single-level route the
 // level is left out: "Approved by Daniel Tan", "Approved by Vaidik Dubey (admin)".
+//
+// An admin's later override follows the decisions, with its reason:
+// "Approved by Daniel Tan, approval revoked by Vaidik Dubey".
+
+import type { ApplicationStatus } from "@/lib/leave-engine/cancellation";
+
+import { OVERRIDE_LINE, type OverrideKind } from "./override";
 
 export type ProgressApplication = {
-  status: "pending" | "approved" | "rejected" | "cancelled";
+  status: ApplicationStatus;
   approvalMode: "single" | "two_level";
   currentLevel: number;
   // The approver assigned to each level (after any reassignment).
@@ -21,13 +28,24 @@ export type ProgressAction = {
   remarks: string | null;
 };
 
+export type ProgressOverride = {
+  kind: OverrideKind;
+  adminName: string;
+  reason: string;
+  actedAt: Date;
+};
+
 export type ProgressLine = { text: string; remarks: string | null };
 
 export type Progress = { lines: ProgressLine[]; summary: string };
 
 const VERB = { approved: "Approved", rejected: "Rejected" } as const;
 
-export function approvalProgress(application: ProgressApplication, actions: readonly ProgressAction[]): Progress {
+export function approvalProgress(
+  application: ProgressApplication,
+  actions: readonly ProgressAction[],
+  overrides: readonly ProgressOverride[] = [],
+): Progress {
   const twoLevel = application.approvalMode === "two_level";
   const assigned = (level: number) => application.approvers.find((a) => a.level === level);
   const sorted = [...actions].sort((a, b) => a.level - b.level);
@@ -38,6 +56,10 @@ export function approvalProgress(application: ProgressApplication, actions: read
     const suffix = tags.length > 0 ? ` (${tags.join(", ")})` : "";
     return { text: `${VERB[action.action]} by ${action.approverName}${suffix}`, remarks: action.remarks };
   });
+
+  for (const override of [...overrides].sort((a, b) => a.actedAt.getTime() - b.actedAt.getTime())) {
+    lines.push({ text: `${OVERRIDE_LINE[override.kind]} ${override.adminName}`, remarks: override.reason });
+  }
 
   if (application.status === "pending") {
     const waiting = assigned(application.currentLevel === 2 ? 2 : 1);

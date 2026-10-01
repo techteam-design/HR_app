@@ -49,6 +49,8 @@ export const leaveApplicationStatusEnum = pgEnum("leave_application_status", [
   "approved",
   "rejected",
   "cancelled",
+  // An admin revoked an approval (approval_overrides). Final, like cancelled.
+  "revoked",
 ]);
 
 export const adjustmentReasonEnum = pgEnum("adjustment_reason", [
@@ -73,4 +75,12 @@ export const approvalReassignmentCauseEnum = pgEnum("approval_reassignment_cause
   "override_reset",
   "employee_change",
   "manager_approver",
+]);
+
+// An admin overriding a decision after the fact (approval_overrides).
+export const approvalOverrideKindEnum = pgEnum("approval_override_kind", [
+  // approved -> revoked ("Revoke approval")
+  "approval_revoked",
+  // rejected -> approved ("Approve anyway")
+  "rejection_overridden",
 ]);

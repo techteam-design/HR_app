@@ -1,14 +1,22 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { approvalActions, branches, employees, leaveApplicationDays, leaveApplications } from "@/db/schema";
+import {
+  approvalActions,
+  approvalOverrides,
+  branches,
+  employees,
+  leaveApplicationDays,
+  leaveApplications,
+} from "@/db/schema";
 import { decisionRole, levelLabel, nextState, type DecisionApplication } from "@/lib/approvals/decision";
+import { overrideDecision, type OverrideKind } from "@/lib/approvals/override";
 import { can, type Role } from "@/lib/auth/rbac";
 import { canCancelAsApproverOrAdmin } from "@/lib/leave-engine/cancellation";
 import { finalApprovalIssues } from "@/lib/leave-engine/final-approval";
 import type { IsoDate } from "@/lib/leave-engine/iso-date";
 import { periodsOf } from "@/lib/leave-engine/request-period";
-import type { DecisionInput, QueueView } from "@/validations/approval";
+import type { DecisionInput, OverrideInput, QueueView } from "@/validations/approval";
 
 import { waitingForCondition } from "./approval-route.service";
 import { withPhotoUrls } from "./employee-photo.service";
@@ -36,6 +44,9 @@ import { fail, UUID, type ServiceResult } from "./service-result";
 // - The final approval uses the balance: it runs in the employee's locked
 //   transaction, re-checks balance and overlap there, and corrects the
 //   carry-forward of a later leave year if needed.
+// - An admin's override ("Revoke approval", "Approve anyway") also runs in
+//   the locked transaction and is recorded in approval_overrides; rules in
+//   src/lib/approvals/override.ts.
 
 type Actor = { id: string; role: Role };
 
@@ -65,8 +76,8 @@ export type QueueItem = ApplicationItem & {
   // How the viewer may decide it (pending only).
   decideAs: "assigned" | "admin" | null;
   canCancel: boolean;
-  // "Decided by me": the viewer's own decision.
-  myDecision: { action: "approved" | "rejected"; level: number; actedAt: Date } | null;
+  // "Decided by me": the viewer's own latest decision, or their override.
+  myDecision: { action: "approved" | "rejected" | OverrideKind; level: number | null; actedAt: Date } | null;
 };
 
 const DECIDED_LIMIT = 30;
@@ -77,17 +88,34 @@ export async function listQueue(actor: Actor, view: QueueView, today: IsoDate): 
   let decisions = new Map<string, QueueItem["myDecision"]>();
 
   if (view === "decided") {
-    const mine = await getDb()
-      .select({
-        applicationId: approvalActions.applicationId,
-        action: approvalActions.action,
-        level: approvalActions.level,
-        actedAt: approvalActions.actedAt,
-      })
-      .from(approvalActions)
-      .where(eq(approvalActions.approverId, actor.id))
-      .orderBy(desc(approvalActions.actedAt))
-      .limit(DECIDED_LIMIT);
+    const db = getDb();
+    const [actions, overrides] = await db.batch([
+      db
+        .select({
+          applicationId: approvalActions.applicationId,
+          action: approvalActions.action,
+          level: approvalActions.level,
+          actedAt: approvalActions.actedAt,
+        })
+        .from(approvalActions)
+        .where(eq(approvalActions.approverId, actor.id))
+        .orderBy(desc(approvalActions.actedAt))
+        .limit(DECIDED_LIMIT),
+      // An admin's own overrides count as their decisions too.
+      db
+        .select({
+          applicationId: approvalOverrides.applicationId,
+          action: approvalOverrides.kind,
+          actedAt: approvalOverrides.actedAt,
+        })
+        .from(approvalOverrides)
+        .where(eq(approvalOverrides.adminId, actor.id))
+        .orderBy(desc(approvalOverrides.actedAt))
+        .limit(DECIDED_LIMIT),
+    ]);
+    const mine = [...actions, ...overrides.map((row) => ({ ...row, level: null }))]
+      .sort((a, b) => b.actedAt.getTime() - a.actedAt.getTime())
+      .slice(0, DECIDED_LIMIT);
     // Latest decision per request (an admin may have decided both levels).
     for (const row of mine) if (!decisions.has(row.applicationId)) decisions.set(row.applicationId, row);
     const ids = [...decisions.keys()];
@@ -315,5 +343,103 @@ export async function decideApplication(
     });
     await applyCarryForwardCorrection(tx, { employee, policy, dates, event: "approval", actorId: actor.id });
     return { ok: true, status: "approved", currentLevel: next.currentLevel };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Overrides (admin)
+// ---------------------------------------------------------------------------
+
+// "Revoke approval" (approved -> revoked) or "Approve anyway" (rejected ->
+// approved), with a required reason. Both run in the employee's locked
+// transaction: the status change is conditional on the status the admin
+// saw, the override is recorded in approval_overrides, and a previous leave
+// year's carry-forward is corrected if needed. "Approve anyway" re-checks
+// balance and overlap exactly like a final approval.
+export async function overrideApplication(
+  actor: Actor,
+  applicationId: string,
+  input: OverrideInput,
+  today: IsoDate,
+): Promise<ServiceResult<{ status: "approved" | "revoked" }>> {
+  if (!isAdmin(actor) || !UUID.test(applicationId)) return fail(404, "Leave request not found");
+  const [application] = await getDb()
+    .select({
+      id: leaveApplications.id,
+      employeeId: leaveApplications.employeeId,
+      leaveTypeId: leaveApplications.leaveTypeId,
+      status: leaveApplications.status,
+      totalDays: leaveApplications.totalDays,
+      employeeName: employees.fullName,
+      joinDate: employees.joinDate,
+    })
+    .from(leaveApplications)
+    .innerJoin(employees, eq(employees.id, leaveApplications.employeeId))
+    .where(eq(leaveApplications.id, applicationId))
+    .limit(1);
+  if (!application) return fail(404, "Leave request not found");
+
+  const decision = overrideDecision({ status: application.status, action: input.action, isAdmin: true });
+  if (!decision.allowed) return fail(409, decision.reason);
+
+  const policies = await loadLeavePolicies();
+  const policy = policies.find((p) => p.leaveTypeId === application.leaveTypeId);
+  if (!policy) return fail(409, "This leave type has no policy.");
+  const approving = input.action === "approve";
+  // The balance check needs the current period's rows.
+  if (approving) await ensureEntitlements(application.employeeId, today, policies);
+  const employee = { id: application.employeeId, joinDate: application.joinDate };
+  const { kind, from } = decision;
+  const to = decision.to as "approved" | "revoked";
+
+  return runLocked(application.employeeId, async (tx) => {
+    const dates = (
+      await tx
+        .select({ date: leaveApplicationDays.date })
+        .from(leaveApplicationDays)
+        .where(eq(leaveApplicationDays.applicationId, application.id))
+    ).map((row) => row.date);
+
+    if (approving) {
+      const periods = periodsOf(policy.code, employee.joinDate, dates);
+      const balance =
+        periods.length === 1
+          ? await periodBalance(tx, { employee, policy, period: periods[0], today, excludeApplicationId: application.id })
+          : null;
+      const clashes = await bookedOn(tx, employee.id, dates, application.id);
+      const issues = finalApprovalIssues({
+        leaveType: policy.code,
+        employeeName: application.employeeName,
+        requestedDays: Number(application.totalDays),
+        available: balance?.available ?? null,
+        clashingDates: clashes.map((day) => day.date),
+        override: true,
+      });
+      if (issues.length > 0) return fail(409, issues.join(" "));
+    }
+
+    const updated = await tx
+      .update(leaveApplications)
+      .set(approving ? { status: to, decidedAt: new Date() } : { status: to })
+      .where(and(eq(leaveApplications.id, application.id), eq(leaveApplications.status, from)))
+      .returning({ id: leaveApplications.id });
+    if (updated.length === 0) return fail(409, MOVED_ON);
+
+    await tx.insert(approvalOverrides).values({
+      applicationId: application.id,
+      kind,
+      adminId: actor.id,
+      reason: input.reason,
+      fromStatus: from,
+      toStatus: to,
+    });
+    await applyCarryForwardCorrection(tx, {
+      employee,
+      policy,
+      dates,
+      event: approving ? "approval" : "revocation",
+      actorId: actor.id,
+    });
+    return { ok: true, status: to };
   });
 }

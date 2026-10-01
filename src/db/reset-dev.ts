@@ -28,6 +28,7 @@ import { getDb } from "./index";
 import {
   account,
   approvalActions,
+  approvalOverrides,
   approvalReassignments,
   approvalRouteOverrides,
   approvalSettings,
@@ -35,6 +36,7 @@ import {
   branches,
   departments,
   employees,
+  halfDaySettings,
   leaveAdjustments,
   leaveApplicationDays,
   leaveApplications,
@@ -72,6 +74,7 @@ async function deleteAllData(): Promise<void> {
   const db = getDb();
   await db.batch([
     db.delete(approvalReassignments),
+    db.delete(approvalOverrides),
     db.delete(approvalActions),
     db.delete(leaveApplicationDays),
     db.delete(leaveApplications),
@@ -83,6 +86,9 @@ async function deleteAllData(): Promise<void> {
     db.delete(approvalRouteOverrides),
     db.delete(branchApprovalRoutes),
     db.delete(approvalSettings),
+    // Dev only: removes any timing edits (updated_by points at an employee);
+    // db:seed re-inserts the default row.
+    db.delete(halfDaySettings),
     // reporting_manager_id is ON DELETE RESTRICT, checked row by row.
     db.update(employees).set({ reportingManagerId: null }),
     db.delete(employees),

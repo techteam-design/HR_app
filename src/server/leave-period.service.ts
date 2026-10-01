@@ -4,7 +4,11 @@ import { getDb } from "@/db";
 import { leaveAdjustments, leaveApplicationDays, leaveApplications, leaveEntitlements } from "@/db/schema";
 import { isLockTimeout, withEmployeeLock, type Reader, type Tx } from "@/db/transaction";
 import { computeCarryForward } from "@/lib/leave-engine/carry-forward";
-import { carryForwardCorrection, carryForwardCorrectionNote } from "@/lib/leave-engine/carry-forward-correction";
+import {
+  carryForwardCorrection,
+  carryForwardCorrectionNote,
+  type CarryForwardEvent,
+} from "@/lib/leave-engine/carry-forward-correction";
 import { previousPeriodFor } from "@/lib/leave-engine/entitlement-plan";
 import type { IsoDate } from "@/lib/leave-engine/iso-date";
 import { nextPeriodStart, type LeavePeriod } from "@/lib/leave-engine/leave-year";
@@ -334,7 +338,8 @@ export async function bookedOn(
 // Carry-forward correction (inside the locked transaction)
 // ---------------------------------------------------------------------------
 
-// After a late final approval or cancellation of ANNUAL leave: when the
+// After a late final approval, cancellation or revocation of ANNUAL leave
+// (including an admin's "Approve anyway"): when the
 // request's leave year already has a next-year row (its carry-forward was
 // fixed when that row was created), add a carry_forward_recalculation
 // adjustment to the next-year row for the difference. System adjustments
@@ -353,7 +358,7 @@ export async function applyCarryForwardCorrection(
     policy: LeavePolicy;
     // The request's dates (all in one leave year).
     dates: readonly IsoDate[];
-    event: "approval" | "cancellation";
+    event: CarryForwardEvent;
     actorId: string;
   },
 ): Promise<number> {

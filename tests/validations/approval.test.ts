@@ -4,6 +4,8 @@ import {
   bulkRouteSchema,
   calendarFilterSchema,
   decisionSchema,
+  decisionsFilterSchema,
+  overrideSchema,
   queueViewSchema,
   routeSchema,
   setupFilterSchema,
@@ -77,5 +79,45 @@ describe("query filters", () => {
     expect(calendarFilterSchema.parse({ branchId: "all" }).branchId).toBe("all");
     expect(calendarFilterSchema.parse({ branchId: "nope" }).branchId).toBeUndefined();
     expect(queueViewSchema.parse("bogus")).toBe("mine");
+  });
+});
+
+describe("overrideSchema", () => {
+  it("needs an action and a reason of at least 3 characters", () => {
+    expect(overrideSchema.safeParse({ action: "revoke", reason: "  Approved by mistake " }).data).toEqual({
+      action: "revoke",
+      reason: "Approved by mistake",
+    });
+    expect(overrideSchema.safeParse({ action: "approve", reason: " ok " }).success).toBe(false);
+    expect(overrideSchema.safeParse({ action: "approve" }).success).toBe(false);
+    expect(overrideSchema.safeParse({ action: "cancel", reason: "Because" }).success).toBe(false);
+  });
+});
+
+describe("decisionsFilterSchema", () => {
+  it("keeps valid filters and drops invalid ones", () => {
+    expect(
+      decisionsFilterSchema.parse({
+        approverId: A,
+        action: "approval_revoked",
+        branchId: "nope",
+        employeeId: B,
+        from: "2026-10-01",
+        to: "2026-02-30",
+        page: "2",
+      }),
+    ).toEqual({
+      approverId: A,
+      action: "approval_revoked",
+      branchId: undefined,
+      employeeId: B,
+      from: "2026-10-01",
+      to: undefined,
+      page: 2,
+    });
+  });
+
+  it("allows the admin-only All decisions view", () => {
+    expect(queueViewSchema.parse("decisions")).toBe("decisions");
   });
 });

@@ -3,7 +3,7 @@
 //
 // Carry-forward is fixed when the new annual row is created (from the
 // previous period's approved days at that moment). When annual leave in the
-// previous period is approved or cancelled AFTER that, the stored figure is
+// previous period is approved, cancelled or revoked AFTER that, the stored figure is
 // out of date. Rather than editing the row, a system adjustment
 // (carry_forward_recalculation) is added to the new period:
 //   correction = carried now − (stored carried + earlier corrections)
@@ -30,6 +30,9 @@ export function carryForwardCorrection({
   return carried - (storedCarried + earlierCorrections);
 }
 
-export function carryForwardCorrectionNote(event: "approval" | "cancellation", range: string): string {
+// "revocation": an admin revoked the approval (approval_overrides).
+export type CarryForwardEvent = "approval" | "cancellation" | "revocation";
+
+export function carryForwardCorrectionNote(event: CarryForwardEvent, range: string): string {
   return `Carry-forward recalculated after ${event} of annual leave ${range} in the previous leave year.`;
 }

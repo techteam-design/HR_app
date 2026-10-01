@@ -82,3 +82,16 @@ describe("button helpers", () => {
     expect(canCancelAsApproverOrAdmin("rejected", true)).toBe(false);
   });
 });
+
+describe("cancelDecision(): revoked requests", () => {
+  it("are final for everyone", () => {
+    for (const actor of [owner, approver, admin]) {
+      expect(cancelDecision({ ...actor, status: "revoked" })).toEqual({
+        allowed: false,
+        reason: "This request's approval was revoked.",
+      });
+    }
+    expect(canEmployeeCancel("revoked")).toBe(false);
+    expect(canCancelAsApproverOrAdmin("revoked", true)).toBe(false);
+  });
+});

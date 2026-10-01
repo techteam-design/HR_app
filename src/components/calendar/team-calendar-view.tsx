@@ -3,7 +3,7 @@
 import { useMemo, useState, useSyncExternalStore } from "react";
 
 import { CancelApplicationButton } from "@/components/leave/cancel-application-button";
-import { daysLabel, HALF_DAY_SLOT_LABELS, LEAVE_LABELS } from "@/components/leave/labels";
+import { daysLabel, halfDaySuffix, LEAVE_LABELS } from "@/components/leave/labels";
 import { Avatar } from "@/components/ui/avatar";
 import { Dialog } from "@/components/ui/dialog";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -461,9 +461,7 @@ function ApplicationDetail({ application }: { application: CalendarApplication }
       </div>
       <p className="text-[15px] text-plum-900">
         {range} · {days}
-        {application.isHalfDay &&
-          application.halfDaySlot &&
-          ` (${HALF_DAY_SLOT_LABELS[application.halfDaySlot].toLowerCase()})`}
+        {halfDaySuffix(application)}
       </p>
       {application.progress && <p className="text-[13px] text-plum-900">{application.progress}</p>}
       {application.reason && <p className="text-[13px] break-words text-muted">Reason: {application.reason}</p>}

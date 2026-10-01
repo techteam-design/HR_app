@@ -1,7 +1,7 @@
-// Config seed: leave types and their policies. Safe for production.
+// Config seed: leave types, their policies and the half-day timings. Safe for production.
 // Insert-only and idempotent: a leave type or policy that already exists is
-// NEVER changed, because the client edits policies on the Leave policies
-// page. The values below are only the defaults for rows that are missing.
+// NEVER changed, because the client edits policies and half-day timings on
+// the Leave policies page. The values below are only the defaults for rows that are missing.
 // (npm run db:reset:dev deletes the dev rows first, so dev gets these
 // defaults again.)
 //
@@ -10,8 +10,11 @@
 import { config } from "dotenv";
 import { eq } from "drizzle-orm";
 
+import { DEFAULT_HALF_DAY_TIMINGS } from "@/lib/leave-engine/half-day";
+import { inputFromTimings } from "@/validations/leave";
+
 import { getDb } from "./index";
-import { leavePolicies, leaveTypes, type EntitlementTable } from "./schema";
+import { halfDaySettings, leavePolicies, leaveTypes, type EntitlementTable } from "./schema";
 import { createSummary, printTarget, runSeed } from "./seed-helpers";
 
 // getDb() is lazy, so loading env here (after imports) is early enough.
@@ -127,6 +130,14 @@ async function main() {
       .returning({ id: leavePolicies.id });
     (insertedPolicy ? summary.created : summary.existing)(`leave_policies: ${type.code}`);
   }
+
+  // Migration 0004 inserts this row too; needed again after db:reset:dev.
+  const [insertedTimings] = await db
+    .insert(halfDaySettings)
+    .values({ id: 1, ...inputFromTimings(DEFAULT_HALF_DAY_TIMINGS) })
+    .onConflictDoNothing({ target: halfDaySettings.id })
+    .returning({ id: halfDaySettings.id });
+  (insertedTimings ? summary.created : summary.existing)("half_day_settings");
 
   summary.print();
 }

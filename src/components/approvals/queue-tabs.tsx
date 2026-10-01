@@ -7,6 +7,7 @@ const LABELS: Record<QueueView, string> = {
   mine: "Waiting for me",
   all: "All pending",
   decided: "Decided by me",
+  decisions: "All decisions",
 };
 
 // Plain links, so each view can be bookmarked and works without JavaScript.
